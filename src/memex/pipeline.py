@@ -126,7 +126,7 @@ class Server:
         day = local.strftime("%Y-%m-%d")
         path = root / "Journal" / local.strftime("%Y") / f"{day}.md"
         if not path.exists():
-            atomic_write(path, frontmatter.dump({"type": "journal", "titre": f"Journal du {day}"}, f"# Journal du {day}\n"))
+            atomic_write(path, frontmatter.dump({"type": "journal", "titre": f"Journal du {day}"}, f"# Journal du {day}\n\n"))
         where = seg.project_name or outcome.dossier.split("/")[-1] or "hors projet"
         if outcome.dossier and f"{outcome.dossier}/{outcome.dossier.split('/')[-1]}.md" in pages:
             where = wikilink(f"{outcome.dossier}/{outcome.dossier.split('/')[-1]}.md", outcome.dossier.split("/")[-1])
@@ -170,18 +170,21 @@ class Server:
             return "", False
         mapping = self._projects(root)
         for key in (seg.project_remote, seg.project):
-            if key and key in mapping:
+            if key and key in mapping and (root / mapping[key]).is_dir():
                 return mapping[key], False
         wanted = seg.project_name or seg.project
         name = safe_filename(wanted if any(c.isupper() for c in wanted) else wanted.replace("-", " ").replace("_", " ").capitalize())
-        if (root / PROJECTS).is_dir():
-            for existing in sorted((root / PROJECTS).iterdir()):
-                if existing.is_dir() and existing.name.lower() == name.lower():
-                    return f"{PROJECTS}/{existing.name}", False
+        # Un dossier du même nom existe peut-être déjà : créé à la main, déplacé par le vérificateur,
+        # ou ouvert comme sujet avant que le projet ait un dépôt.
+        for top in (PROJECTS, TOPICS):
+            if (root / top).is_dir():
+                for existing in sorted((root / top).iterdir()):
+                    if existing.is_dir() and existing.name.lower() == name.lower():
+                        return f"{top}/{existing.name}", False
         return f"{PROJECTS}/{name}", True
 
     def _remember_project(self, root: Path, seg: Segment, dossier: str) -> None:
-        if not seg.project or not dossier.startswith(PROJECTS + "/") or not (root / dossier).is_dir():
+        if not seg.project or dossier.split("/")[0] not in (PROJECTS, TOPICS) or not (root / dossier).is_dir():
             return
         mapping = self._projects(root)
         for key in (seg.project_remote, seg.project):
@@ -549,6 +552,7 @@ class Server:
             "quarantaine": len(list(self.config.quarantine.glob("*/*.md"))) if self.config.quarantine.is_dir() else 0,
             "revue_en_attente": [r.get("id") for r in reviews],
             "agent": self.agent.name,
+            "bac_a_sable": self.agent.sandbox_state(),
             "vault": str(self.config.vault_dir) if self.config.vault_dir else "(désactivé)",
         }
 

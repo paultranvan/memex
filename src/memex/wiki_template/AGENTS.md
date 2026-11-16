@@ -85,6 +85,8 @@ Un petit choix sans enjeu ne mérite pas de fiche : une ligne dans la page vivan
 - Concis : une information à un seul endroit. Avant d'ajouter, chercher si c'est déjà écrit, et
   compléter plutôt que répéter.
 - Dates absolues (`2026-11-12`), jamais « hier » ou « la semaine dernière ».
+- Pas de détail volatil : ni identifiant de commit, ni numéro de ligne, ni nom de branche temporaire.
+- Noms de fichiers simples : pas de `:`, `/`, `?`, `*`, `"`, `<`, `>`, `|`, `#` (certains appareils les refusent).
 - Liens Obsidian `[[Dossier/Page|libellé]]` vers les pages citées, une seule fois par page pour une
   même cible.
 - Jamais de secret (mot de passe, clé, jeton) ni de donnée personnelle sensible.

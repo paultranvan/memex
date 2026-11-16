@@ -17,7 +17,7 @@ from .lint import lint
 from .notify import notify
 from .pages import is_decision_path, load_wiki
 from .pipeline import RESULT_FILE, Server
-from .util import CommandError, LockBusy, append_line, eprint, file_lock, iso, now, read_json, write_json
+from .util import CommandError, LockBusy, append_line, eprint, file_lock, iso, now, parse_ts, read_json, write_json
 from .validate import validate
 from .wikirepo import LandConflict
 
@@ -251,12 +251,8 @@ class Reviews:
         for review in self.all():
             if review.get("statut") != PENDING:
                 continue
-            created = review.get("cree", "")
-            try:
-                stamp = time.mktime(time.strptime(created, "%Y-%m-%dT%H:%M:%SZ")) - time.timezone
-            except ValueError:
-                continue
-            if stamp < limit:
+            created = parse_ts(review.get("cree"))
+            if created and created.timestamp() < limit:
                 review["statut"] = EXPIRED
                 write_json(self._path(review["id"]), review)
                 self.repo.git("branch", "-D", review.get("branche", ""), check=False)

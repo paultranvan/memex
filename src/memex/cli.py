@@ -204,9 +204,9 @@ def cmd_server(config: Config, args: argparse.Namespace) -> int:
         return 0
     if command == "device":
         if args.action == "list":
-            print("\n".join(serverops.device_list()) or "(aucun appareil)")
+            print("\n".join(serverops.device_list(config)) or "(aucun appareil)")
         elif args.action == "remove":
-            print(serverops.device_remove(args.name))
+            print(serverops.device_remove(config, args.name))
         else:
             print(serverops.device_add(config, args.name, " ".join(args.key)))
         return 0

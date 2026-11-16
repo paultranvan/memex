@@ -80,19 +80,43 @@ def restore_backup(config: Config, archive_path: Path, force: bool = False) -> s
 
 
 # ── appareils : une clé SSH par machine, limitée à la porte memex ─────────
-def _authorized_keys() -> Path:
-    return Path.home() / ".ssh" / "authorized_keys"
+def _owner(config: Config):
+    """Le compte qui fait tourner memex : le propriétaire de MEMEX_HOME."""
+    import pwd
+
+    try:
+        return pwd.getpwuid(config.home.stat().st_uid)
+    except (OSError, KeyError):
+        return pwd.getpwuid(os.getuid())
+
+
+def _authorized_keys(config: Config) -> Path:
+    custom = config.get("MEMEX_AUTHORIZED_KEYS").strip()
+    if custom:
+        return Path(custom).expanduser()
+    return Path(_owner(config).pw_dir) / ".ssh" / "authorized_keys"
 
 
 def _gate_binary(config: Config) -> str:
     return config.get("MEMEX_GATE_BIN").strip() or shutil.which("memex-gate") or "/usr/local/bin/memex-gate"
 
 
-def _lines() -> list[str]:
+def _lines(config: Config) -> list[str]:
     try:
-        return _authorized_keys().read_text(encoding="utf-8").splitlines()
+        return _authorized_keys(config).read_text(encoding="utf-8").splitlines()
     except OSError:
         return []
+
+
+def _write_keys(config: Config, lines: list[str]) -> str:
+    """Lancé en root, le fichier appartient à root : le compte memex (donc un agent) ne peut pas s'ajouter de clé."""
+    path = _authorized_keys(config)
+    try:
+        path.parent.mkdir(mode=0o755 if os.geteuid() == 0 else 0o700, parents=True, exist_ok=True)
+        atomic_write(path, "\n".join(lines) + ("\n" if lines else ""), 0o644 if os.geteuid() == 0 else 0o600)
+    except PermissionError:
+        return f"Impossible d'écrire {path} : relance la commande avec sudo."
+    return ""
 
 
 def _device_of(line: str) -> str:
@@ -108,26 +132,30 @@ def device_add(config: Config, name: str, key: str) -> str:
     if not match:
         return "Clé publique invalide : colle le contenu d'un fichier .pub (ssh-ed25519 AAAA…)."
     blob = match.group(2)
-    kept = [line for line in _lines() if _device_of(line) != name and blob not in line]
+    kept = [line for line in _lines(config) if _device_of(line) != name and blob not in line]
     kept.append(f'restrict,command="{_gate_binary(config)} --forced --device {name}" {key}')
-    path = _authorized_keys()
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    atomic_write(path, "\n".join(kept) + "\n", 0o600)
-    (config.inbox / name).mkdir(parents=True, exist_ok=True)
+    error = _write_keys(config, kept)
+    if error:
+        return error
+    inbox = config.inbox / name
+    inbox.mkdir(parents=True, exist_ok=True)
+    if os.geteuid() == 0:
+        owner = _owner(config)
+        for folder in (config.inbox, inbox):
+            os.chown(folder, owner.pw_uid, owner.pw_gid)
     return f"Appareil « {name} » autorisé."
 
 
-def device_remove(name: str) -> str:
-    lines = _lines()
+def device_remove(config: Config, name: str) -> str:
+    lines = _lines(config)
     kept = [line for line in lines if _device_of(line) != name]
     if len(kept) == len(lines):
         return f"Aucun appareil nommé « {name} »."
-    atomic_write(_authorized_keys(), "\n".join(kept) + ("\n" if kept else ""), 0o600)
-    return f"Appareil « {name} » retiré."
+    return _write_keys(config, kept) or f"Appareil « {name} » retiré."
 
 
-def device_list() -> list[str]:
-    return [name for name in (_device_of(line) for line in _lines()) if name]
+def device_list(config: Config) -> list[str]:
+    return [name for name in (_device_of(line) for line in _lines(config)) if name]
 
 
 __all__ = ["backup", "restore_backup", "device_add", "device_remove", "device_list", "io"]

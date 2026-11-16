@@ -333,5 +333,26 @@ class EndToEnd(Sandbox):
         self.assertEqual(ship(self.config).sent, 1)
 
 
+class EndToEndSandboxed(Sandbox):
+    """Le trajet nominal, avec les agents réellement enfermés dans bubblewrap."""
+
+    overrides = {"MEMEX_SANDBOX": "bwrap"}
+
+    def test_pipeline_works_inside_the_sandbox(self):
+        from memex.agent import Agent
+
+        if "actif" not in Agent(self.config).sandbox_state():
+            self.skipTest("bubblewrap indisponible ici")
+        repo = self.make_repo("solitaire", "git@github.com:moi/solitaire.git")
+        self.claude_session(repo, [
+            ("user", LONG),
+            ("assistant", "DECISION: Scores côté serveur | Les scores sont stockés sur le serveur. | Classement partagé."),
+        ])
+        self.assertEqual(sync(self.config, quiet=True), 0)
+        self.assertEqual(Server(self.config).run(), 0)
+        self.assertIn("Scores côté serveur", (self.server_home / "wiki/Projets/Solitaire/Solitaire.md").read_text(encoding="utf-8"))
+        self.assertTrue((self.vault / "Projets/Solitaire/Décisions/2026-11-12 Scores côté serveur.md").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

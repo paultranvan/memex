@@ -13,7 +13,7 @@ from pathlib import Path
 from . import frontmatter
 from .pages import (
     CONCEPTS, CONTENT_DIRS, JOURNAL, MANAGED_FILES, PROTECTED_FILES, infer_type, is_decision_path, is_hidden,
-    parse_page, unlink,
+    parse_page, safe_name, unlink,
 )
 from .util import atomic_write
 from .wikirepo import WikiRepo
@@ -61,11 +61,41 @@ def _decision_change_allowed(old: str, new: str) -> bool:
     return all(old_meta.get(k) == new_meta.get(k) for k in keys if k not in DECISION_MUTABLE)
 
 
+def _fix_names(repo: WikiRepo, cwd: Path, base: str, verdict: Verdict) -> None:
+    """Un fichier ajouté avec un caractère refusé par Obsidian mobile (`:`…) est renommé, et les liens suivent."""
+    renames = {}
+    for status, path in repo.changes(cwd, base):
+        if status != "A" or path.split("/")[0] not in CONTENT_DIRS or not path.endswith(".md"):
+            continue
+        parts = path.split("/")
+        fixed = "/".join([safe_name(part) for part in parts[:-1]] + [safe_name(parts[-1])])
+        if fixed != path and not (cwd / fixed).exists():
+            (cwd / fixed).parent.mkdir(parents=True, exist_ok=True)
+            (cwd / path).rename(cwd / fixed)
+            renames[path[:-3]] = fixed[:-3]
+            verdict.warnings.append(f"{path} : renommé en « {fixed.split('/')[-1]} » (caractère refusé sur mobile)")
+    if not renames:
+        return
+    for status, path in repo.changes(cwd, base) + [("A", new + ".md") for new in renames.values()]:
+        target = cwd / path
+        if status == "D" or not path.endswith(".md") or not target.is_file():
+            continue
+        text = original = target.read_text(encoding="utf-8")
+        for old, new in renames.items():
+            text = text.replace(f"[[{old}", f"[[{new}")
+            old_name, new_name = old.split("/")[-1], new.split("/")[-1]
+            text = text.replace(f"[[{old_name}|", f"[[{new_name}|").replace(f"[[{old_name}]]", f"[[{new_name}]]")
+        if text != original:
+            target.write_text(text, encoding="utf-8")
+    repo.stage_all(cwd)
+
+
 def validate(repo: WikiRepo, cwd: Path, base: str, role: str, today: str, max_page_chars: int = 24000) -> Verdict:
     assert role in ROLES
     verdict = Verdict()
     cwd = Path(cwd)
     repo.stage_all(cwd)
+    _fix_names(repo, cwd, base, verdict)
 
     for status, path in repo.changes(cwd, base):
         top = path.split("/")[0]

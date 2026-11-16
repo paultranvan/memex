@@ -175,5 +175,19 @@ class LinkIndex:
 
 
 def wikilink(path: str, label: str = "") -> str:
+    """Lien Obsidian. Avec un chemin, le libellé est toujours donné : sinon Obsidian affiche le chemin entier."""
     target = path[:-3] if path.endswith(".md") else path
-    return f"[[{target}|{label}]]" if label and label != Path(target).name else f"[[{target}]]"
+    label = (label or Path(target).name).replace("|", "-").replace("]", ")").replace("[", "(")
+    return f"[[{target}|{label}]]" if "/" in target or label != target else f"[[{target}]]"
+
+
+_UNSAFE = re.compile(r'[\\/:*?"<>|#^\[\]]')
+
+
+def safe_name(name: str) -> str:
+    """Nom de fichier accepté par Obsidian sur toutes les plateformes (Android et Windows refusent `:`)."""
+    stem, dot, ext = name.rpartition(".")
+    stem = stem if dot else name
+    stem = re.sub(r"\s*:\s*", " - ", stem)
+    stem = re.sub(r"\s+", " ", _UNSAFE.sub(" ", stem)).strip(" .") or "sans-titre"
+    return f"{stem[:120].rstrip(' .')}.{ext}" if dot else stem

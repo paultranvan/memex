@@ -435,6 +435,40 @@ class Guardrails(Sandbox):
         fiche.write_text(fiche.read_text().replace("On fait A.", "On fait [[Projets/P/P|A]]."))
         self.assertFalse(self.check("tisseur").ok)
 
+    def test_unsafe_file_names_are_renamed_and_links_follow(self):
+        from memex.pages import safe_name
+
+        self.assertEqual(safe_name("2026-11-13 Architecture : VPS central.md"), "2026-11-13 Architecture - VPS central.md")
+        self.assertEqual(safe_name('Quoi ? "Ça" #1 [x].md'), "Quoi Ça 1 x.md")
+        self.assertEqual(safe_name("Déjà sûr (v2).md"), "Déjà sûr (v2).md")
+        bad = "Projets/P/Décisions/2026-11-12 Archi : serveur central.md"
+        (self.tree / bad).write_text("## Décision\n\nUn serveur central.\n")
+        page = self.tree / "Projets/P/P.md"
+        page.write_text(page.read_text() + "\n- [[Projets/P/Décisions/2026-11-12 Archi : serveur central|la fiche]] et [[2026-11-12 Archi : serveur central]]\n")
+        verdict = self.check("archiviste")
+        self.assertTrue(verdict.ok, verdict.errors)
+        good = "Projets/P/Décisions/2026-11-12 Archi - serveur central.md"
+        self.assertIn(good, verdict.touched)
+        self.assertFalse((self.tree / bad).exists())
+        text = page.read_text()
+        self.assertIn("[[Projets/P/Décisions/2026-11-12 Archi - serveur central|la fiche]]", text)
+        self.assertIn("[[2026-11-12 Archi - serveur central]]", text)
+        self.assertNotIn(" : serveur", text)
+
+    def test_project_reuses_a_same_name_folder_and_forgets_stale_mappings(self):
+        from memex.segment import Message, Segment
+        from memex.util import now, write_json
+
+        root = self.repo.dir
+        seg = Segment("claude-code", "d", "s", 1, [Message("user", "x")], now(), now(), project="memex", project_name="memex", project_remote="github.com/moi/memex")
+        self.assertEqual(self.server.dossier_for(root, seg), ("Projets/Memex", True))
+        (root / "Sujets/Memex").mkdir(parents=True)
+        self.assertEqual(self.server.dossier_for(root, seg), ("Sujets/Memex", False))   # ouvert comme sujet avant d'avoir un dépôt
+        write_json(root / ".memex/projects.json", {"github.com/moi/memex": "Projets/Disparu"})
+        self.assertEqual(self.server.dossier_for(root, seg), ("Sujets/Memex", False))   # correspondance périmée ignorée
+        (root / "Projets/Memex").mkdir(parents=True)
+        self.assertEqual(self.server.dossier_for(root, seg), ("Projets/Memex", False))
+
     def test_verificateur_may_delete_pages_but_not_decisions(self):
         (self.tree / "Concepts/Tailscale.md").unlink()
         verdict = self.check("verificateur")
@@ -471,7 +505,7 @@ class WikiModel(Sandbox):
         self.assertEqual(resolver.resolve("Solitaire/Solitaire"), "Projets/Solitaire/Solitaire.md")
         self.assertIsNone(resolver.resolve("Page absente"))
         text = build_index(pages)
-        self.assertIn("[[Projets/Solitaire/Solitaire]] — Un jeu. · 1 décision(s), dont 0 active(s)", text)
+        self.assertIn("[[Projets/Solitaire/Solitaire|Solitaire]] — Un jeu. · 1 décision(s), dont 0 active(s)", text)
         self.assertIn("_(remplacee)_", text)
         self.assertEqual(text, build_index(load_wiki(root)))
         report = lint(root)
@@ -560,6 +594,88 @@ class Imports(Sandbox):
         again = imports.run(self.config, "claude", path)
         self.assertEqual(len(again.written), 1)
         self.assertTrue(again.written[0].endswith("_002.md"))
+
+
+class Sandboxing(Sandbox):
+    """Le bac à sable réel (bubblewrap). Ignoré sur une machine où il ne peut pas démarrer."""
+
+    overrides = {"MEMEX_SANDBOX": "auto"}
+    init_server = False
+
+    def setUp(self):
+        super().setUp()
+        from memex.agent import Agent
+
+        if "actif" not in Agent(self.config).sandbox_state():
+            self.skipTest("bubblewrap indisponible ici")
+        self.Agent = Agent
+        self.work = self.root / "work"
+        self.work.mkdir()
+        self.evasion = Path.home() / ".memex-test-evasion"
+
+    def tearDown(self):
+        self.evasion.unlink(missing_ok=True)
+        super().tearDown()
+
+    def test_edit_agent_writes_only_inside_its_workdir(self):
+        outside = self.root / "ailleurs"
+        outside.mkdir()
+        self.set(MEMEX_AGENT_EDIT_CMD=(
+            f"echo dedans > dedans.txt; echo dehors > {outside}/dehors.txt; echo dehors > {self.evasion}; "
+            "ls ~/.ssh 2>/dev/null | wc -l > ssh.txt; echo fini > $MEMEX_OUT_FILE"
+        ))
+        result = self.Agent(self.config).run("edit", "invite", self.work)
+        self.assertEqual(result.text.strip(), "fini")
+        self.assertEqual((self.work / "dedans.txt").read_text().strip(), "dedans")
+        self.assertFalse((outside / "dehors.txt").exists())
+        self.assertFalse(self.evasion.exists())
+        self.assertEqual((self.work / "ssh.txt").read_text().strip(), "0")   # les clés SSH sont masquées
+
+    def test_read_agent_cannot_write_anywhere(self):
+        (self.work / "lisible.txt").write_text("contenu lisible")
+        self.set(MEMEX_AGENT_READ_CMD="echo x > essai.txt; cat lisible.txt")
+        result = self.Agent(self.config).run("read", "invite", self.work)
+        self.assertIn("contenu lisible", result.text)
+        self.assertFalse((self.work / "essai.txt").exists())
+
+    def test_required_sandbox_fails_closed_when_missing(self):
+        from memex.agent import AgentError as Error
+
+        self.set(MEMEX_SANDBOX="bwrap", MEMEX_AGENT_EDIT_CMD="true")
+        with mock.patch("shutil.which", return_value=None):
+            with self.assertRaises(Error):
+                self.Agent(self.config).run("edit", "invite", self.work)
+        self.set(MEMEX_SANDBOX="auto")
+        with mock.patch("shutil.which", return_value=None):
+            self.assertEqual(self.Agent(self.config).sandbox("edit", self.work, self.root), [])
+
+
+class Devices(Sandbox):
+    KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHk0cDg5bXhGZ0x2b1pWd2Jqc0R3eXJ0dG9mZmFrZWtleQ moi@portable"
+
+    def test_add_replace_list_remove(self):
+        from memex import serverops
+
+        self.assertIn("autorisé", serverops.device_add(self.config, "portable", self.KEY))
+        self.assertIn("autorisé", serverops.device_add(self.config, "portable", self.KEY))   # rejouable
+        other = self.KEY.replace("IHk0", "IHk1").replace("moi@portable", "moi@fixe")
+        serverops.device_add(self.config, "fixe", other)
+        lines = (self.root / "authorized_keys").read_text().splitlines()
+        self.assertEqual(len(lines), 2)
+        self.assertTrue(all(line.startswith('restrict,command="') and "--forced --device " in line for line in lines))
+        self.assertEqual(serverops.device_list(self.config), ["portable", "fixe"])
+        self.assertTrue((self.config.inbox / "fixe").is_dir())
+        self.assertIn("retiré", serverops.device_remove(self.config, "portable"))
+        self.assertEqual(serverops.device_list(self.config), ["fixe"])
+        self.assertIn("Aucun appareil", serverops.device_remove(self.config, "inconnu"))
+
+    def test_rejects_bad_names_and_keys(self):
+        from memex import serverops
+
+        self.assertIn("invalide", serverops.device_add(self.config, "nom avec espace", self.KEY))
+        self.assertIn("invalide", serverops.device_add(self.config, "ok", 'command="sh" ' + self.KEY))
+        self.assertIn("invalide", serverops.device_add(self.config, "ok", "pas une clé"))
+        self.assertFalse((self.root / "authorized_keys").exists())
 
 
 class Misc(unittest.TestCase):

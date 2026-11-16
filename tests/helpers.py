@@ -41,7 +41,8 @@ class Sandbox(unittest.TestCase):
             "MEMEX_IDLE_MINUTES": "0", "MEMEX_SERVER_SSH": "local", "MEMEX_HOME": str(self.server_home),
             "MEMEX_VAULT_DIR": str(self.vault), "MEMEX_TZ": "UTC", "MEMEX_TISSEUR_MIN_PAGES": "1",
             "MEMEX_AGENT_EXTRACT_CMD": FAKE, "MEMEX_AGENT_READ_CMD": FAKE, "MEMEX_AGENT_EDIT_CMD": FAKE,
-            "MEMEX_MIN_USER_CHARS": "20", "MEMEX_BACKUP_PULL": "0",
+            "MEMEX_MIN_USER_CHARS": "20", "MEMEX_BACKUP_PULL": "0", "MEMEX_SANDBOX": "none",
+            "MEMEX_AUTHORIZED_KEYS": str(self.root / "authorized_keys"),
         }
         values.update(self.overrides)
         self.env_file = self.root / "memex.env"

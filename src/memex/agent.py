@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import tempfile
@@ -29,7 +30,8 @@ from .util import now
 
 _MODEL = '${MEMEX_MODEL:+--model "$MEMEX_MODEL"}'
 _CODEX = 'codex exec --skip-git-repo-check --ephemeral -o "$MEMEX_OUT_FILE" ${MEMEX_MODEL:+-m "$MEMEX_MODEL"}'
-_HERMES = 'hermes --ignore-rules ${MEMEX_MODEL:+-m "$MEMEX_MODEL"}'
+# Hermes ancre ses outils de fichiers sur TERMINAL_CWD, pas sur le répertoire du processus.
+_HERMES = 'TERMINAL_CWD="$PWD" hermes --ignore-rules ${MEMEX_MODEL:+-m "$MEMEX_MODEL"}'
 
 PRESETS: dict[str, dict[str, str]] = {
     "claude": {
@@ -82,6 +84,60 @@ class Agent:
             )
         return PRESETS[self.name][kind]
 
+    # ── bac à sable ───────────────────────────────────────────────────────
+    def sandbox(self, kind: str, cwd: Path, tmp: Path) -> list[str]:
+        """Préfixe bubblewrap : tout le système en lecture seule, sauf le dossier de
+        travail (pour `edit`) et l'état propre du harnais. Les clés SSH sont masquées.
+
+        MEMEX_SANDBOX : `auto` (défaut, utilisé s'il fonctionne), `bwrap` (exigé), `none`.
+        """
+        mode = (self.config.get("MEMEX_SANDBOX") or "auto").strip().lower()
+        if mode == "none":
+            return []
+        binary = shutil.which("bwrap")
+        base = [binary or "bwrap", "--die-with-parent", "--ro-bind", "/", "/", "--dev", "/dev", "--tmpfs", "/tmp"]
+        if not binary or not self._sandbox_works(tuple(base)):
+            if mode == "bwrap":
+                raise AgentError("MEMEX_SANDBOX=bwrap mais bubblewrap est absent ou inutilisable ici")
+            return []
+        home = Path.home()
+        writable = self.config.list("MEMEX_SANDBOX_RW") or [
+            ".hermes", ".claude", ".claude.json", ".codex", ".cache", ".config", ".local/state", ".local/share/claude", ".npm",
+        ]
+        args = list(base)
+        for name in writable:
+            path = home / name
+            if path.exists():
+                args += ["--bind", str(path), str(path)]
+        for name in (".ssh", ".gnupg"):
+            if (home / name).is_dir():
+                args += ["--tmpfs", str(home / name)]
+        args += ["--bind", str(tmp), str(tmp)]
+        args += ["--bind" if kind == "edit" else "--ro-bind", str(cwd), str(cwd), "--chdir", str(cwd)]
+        return args
+
+    _sandbox_cache: dict[tuple, bool] = {}
+
+    @classmethod
+    def _sandbox_works(cls, base: tuple) -> bool:
+        if base not in cls._sandbox_cache:
+            try:
+                ok = subprocess.run([*base, "true"], capture_output=True, timeout=20).returncode == 0
+            except (OSError, subprocess.TimeoutExpired):
+                ok = False
+            cls._sandbox_cache[base] = ok
+        return cls._sandbox_cache[base]
+
+    def sandbox_state(self) -> str:
+        mode = (self.config.get("MEMEX_SANDBOX") or "auto").strip().lower()
+        if mode == "none":
+            return "désactivé (MEMEX_SANDBOX=none)"
+        binary = shutil.which("bwrap")
+        if not binary:
+            return "indisponible : bubblewrap n'est pas installé"
+        base = (binary, "--die-with-parent", "--ro-bind", "/", "/", "--dev", "/dev", "--tmpfs", "/tmp")
+        return "actif (bubblewrap)" if self._sandbox_works(base) else "indisponible : bubblewrap ne démarre pas dans cet environnement"
+
     def run(self, kind: str, prompt: str, cwd: Path, label: str = "") -> AgentResult:
         if not prompt.startswith(PIPELINE_SENTINEL):
             prompt = f"{PIPELINE_SENTINEL}\n{prompt}"
@@ -104,7 +160,7 @@ class Agent:
             })
             started = time.time()
             proc = subprocess.Popen(
-                ["sh", "-c", command], cwd=str(cwd), env=env, stdin=subprocess.DEVNULL,
+                [*self.sandbox(kind, Path(cwd), Path(tmp)), "sh", "-c", command], cwd=str(cwd), env=env, stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True,
             )
             try:
