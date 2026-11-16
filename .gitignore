@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+/build/
+/dist/
+*.egg-info/
+# configuration locale : ne jamais versionner (adresses, noms de machines)
+/memex.env
+/config/memex.env
