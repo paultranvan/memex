@@ -259,22 +259,60 @@ class EndToEnd(Sandbox):
         self.assertEqual(Server(self.config).pending(), [])
         self.assertEqual(git(self.server_home / "wiki", "status", "--porcelain"), "")
 
-    def test_failing_agent_leaves_segment_for_next_run(self):
+    def test_agent_outage_never_quarantines_the_queue(self):
+        """Quota atteint, réseau coupé : aucun condensé n'est pénalisé, quel que soit le nombre de passages."""
         self.solitaire_session()
+        self.claude_session(self.make_repo("autre", "git@github.com:moi/autre.git"), [
+            ("user", "Un second projet attend son tour pendant que l'agent est hors service."),
+            ("assistant", "DECISION: Langage | Le projet est écrit en Rust. | Performance."),
+        ], start="2026-11-13T09:00:00Z")
         self.host_sync()
+        state = self.server_home / "state"
         os.environ["FAKE_AGENT_MODE"] = "fail"
-        self.assertEqual(self.server_run(), 1)
-        self.assertEqual(len(Server(self.config).pending()), 1)
+        for _ in range(5):                                   # bien plus que MEMEX_MAX_RETRIES
+            self.assertEqual(self.server_run(), 1)
+        self.assertEqual(len(Server(self.config).pending()), 2)
+        self.assertEqual(list((self.server_home / "raw/quarantine").rglob("*.md")), [])
+        self.assertEqual(Server(self.config).status()["echecs"], {})   # aucun échec compté
+        self.assertTrue((state / "agent-down.json").exists())
+        self.assertEqual(len(self.agent_calls()), 10)        # par passage : un essai et la sonde, puis arrêt
+        notices = (self.server_home / "logs/notifications.log").read_text(encoding="utf-8")
+        self.assertEqual(notices.count("agent indisponible"), 1)   # prévenu une fois, pas à chaque passage
+        self.assertNotEqual(Server(self.config).status()["agent_indisponible"], "non")
         os.environ["FAKE_AGENT_MODE"] = "ok"
         self.assertEqual(self.server_run(), 0)
         self.assertEqual(Server(self.config).pending(), [])
+        self.assertFalse((state / "agent-down.json").exists())
+        self.assertIn("Scores côté serveur", self.wiki("Projets/Solitaire/Solitaire.md"))
+        self.assertIn("Rust", self.wiki("Projets/Autre/Autre.md"))
+
+    def test_failure_tied_to_one_segment_still_ends_in_quarantine(self):
+        """L'agent répond à la sonde mais échoue sur ce condensé : là, les échecs comptent."""
+        self.solitaire_session()
+        self.host_sync()
+        os.environ["FAKE_AGENT_MODE"] = "fail_work"
+        for _ in range(3):
+            self.assertEqual(self.server_run(), 1)
+        self.assertEqual(Server(self.config).pending(), [])
+        self.assertEqual(len(list((self.server_home / "raw/quarantine").rglob("*.md"))), 1)
+        self.assertFalse((self.server_home / "state/agent-down.json").exists())
+
+    def test_agent_that_writes_nothing_is_a_failure_not_a_silent_skip(self):
+        self.solitaire_session()
+        self.host_sync()
+        os.environ["FAKE_AGENT_MODE"] = "silent"
+        self.assertEqual(self.server_run(), 1)
+        self.assertEqual(len(Server(self.config).pending()), 1)          # la session n'est pas classée « sans suite »
+        self.assertEqual(Server(self.config).ledger_ids(), set())
+        os.environ["FAKE_AGENT_MODE"] = "ok"
+        self.assertEqual(self.server_run(), 0)
         self.assertIn("Scores côté serveur", self.wiki("Projets/Solitaire/Solitaire.md"))
 
     # ── tisseur ───────────────────────────────────────────────────────────
     def two_projects_sharing_an_entity(self):
         self.solitaire_session()
         self.claude_session(self.make_repo("atlas", "git@github.com:moi/atlas.git"), [
-            ("user", "Pour le déploiement de Atlas, il faut décider comment joindre le serveur."),
+            ("user", "Pour le déploiement d'Atlas, il faut décider comment joindre le serveur."),
             ("assistant", "DECISION: Accès par réseau privé | Le serveur est joint par un réseau privé, comme pour Solitaire. | Pas de port public. @Tailscale"),
         ], start="2026-11-13T09:00:00Z")
         self.host_sync()

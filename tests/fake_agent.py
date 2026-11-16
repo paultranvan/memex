@@ -21,7 +21,12 @@ if calls:
     with open(calls, "a", encoding="utf-8") as handle:
         handle.write(prompt.split("\n", 2)[1][:60] + "\n")
 
-if MODE == "fail":
+if MODE == "fail":           # agent hors service : même la sonde échoue
+    sys.exit(1)
+if "Réponds uniquement par ce mot" in prompt:
+    print("memex-ok")
+    sys.exit(0)
+if MODE == "fail_work":      # l'agent répond à la sonde mais échoue sur le travail demandé
     sys.exit(1)
 
 
@@ -56,6 +61,8 @@ def extract() -> None:
 
 
 def integrate() -> None:
+    if MODE == "silent":         # l'agent rend la main sans rien écrire, pas même son compte rendu
+        return
     elements = json.loads(block("## Éléments à intégrer"))
     existing = sorted(p for p in Path(".").rglob("*.md") if p.parts[0] in ("Projets", "Sujets"))
     where = re.search(r"Dossier : `([^`]+)`", prompt)

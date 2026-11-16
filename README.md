@@ -56,7 +56,7 @@ src/memex/            le programme (Python, bibliothèque standard seulement)
 host/                 installation d'une machine de travail
 server/               installation du serveur, unités systemd, skill Hermes
 config/               modèle de configuration
-tests/                69 tests, dont les scénarios de bout en bout
+tests/                71 tests, dont les scénarios de bout en bout
 ```
 
 ## Tests

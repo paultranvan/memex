@@ -172,7 +172,7 @@ Chaque semaine, s'il a quelque chose à proposer, tu reçois une liste numérot�
 1. [fusion] Fusionner Courtiers.md dans PEA.md
    Pourquoi : les deux comparent les mêmes courtiers.
 2. [condensation] Condenser Solitaire.md
-? À trancher : le déploiement de Atlas est-il manuel ou scripté ?
+? À trancher : le déploiement d'Atlas est-il manuel ou scripté ?
 ```
 
 Réponds à Hermes « ok », « ok sauf la 2 », « seulement la 1 » ou « non ». Ou en ligne de commande :
@@ -249,7 +249,7 @@ Avant d'abandonner une machine, lance `memex sync`. Ses condensés sont déjà s
 | `memex doctor` : serveur injoignable | La clé est-elle autorisée ? `ssh -i ~/.ssh/memex_ed25519 memex@mon-vps memex-gate ping` |
 | Les condensés arrivent, pas les pages | Sur le serveur : `memex server status`, puis `journalctl -u memex-run.service -n 50` |
 | Un condensé est en quarantaine | `logs/agent/` pour la raison ; pour réessayer, remets le fichier de `raw/quarantine/<appareil>/` dans `raw/inbox/<appareil>/` |
-| L'agent ne répond pas | `sudo -iu memex` puis `hermes -z "OK"` : la connexion a peut-être expiré |
+| L'agent ne répond pas | `memex server status` affiche `agent_indisponible` avec la date et l'erreur. Rien n'est perdu : la file attend et chaque passage réessaie. Si la connexion a expiré : `sudo -iu memex` puis `hermes -z "OK"` |
 | Une page a été abîmée | `git -C /srv/memex/wiki log -- "Chemin/Page.md"`, puis `memex server restore "Chemin/Page.md" --rev <commit>` |
 | Le hook ne s'affiche pas | `memex hook session-start < /dev/null` dans le dossier du projet |
 | Le wiki local est en retard | `memex pull` |
@@ -275,6 +275,12 @@ host/uninstall.sh                  # retire hooks, pointeurs, minuterie et progr
 host/uninstall.sh --purge          # … et les données locales
 ```
 
-Sur le serveur : `systemctl disable --now memex-run.path memex-run.timer memex-verif.timer
-memex-backup.timer`, puis supprime `/opt/memex`, `/etc/memex` et, si tu ne veux plus du wiki,
-le compte `memex` et `/srv/memex`.
+Sur le serveur :
+
+```bash
+sudo server/uninstall.sh           # retire minuteries, unités et programme ; garde le wiki
+sudo server/uninstall.sh --purge   # … et supprime wiki, condensés, sauvegardes et configuration
+server/uninstall.sh --user-mode    # pour une installation faite sans root
+```
+
+Le compte `memex` et le dossier du vault ne sont jamais supprimés par le script.

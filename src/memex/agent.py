@@ -53,6 +53,8 @@ PRESETS: dict[str, dict[str, str]] = {
 # Les harnais qui reçoivent l'invite en argument sont limités par le noyau (128 Ko par argument).
 ARGV_PRESETS = {"hermes"}
 ARGV_LIMIT = 120_000
+# Mot attendu en réponse à la sonde : prouve que l'agent répond encore.
+PROBE_TOKEN = "memex-ok"
 
 
 class AgentError(RuntimeError):
@@ -138,7 +140,21 @@ class Agent:
         base = (binary, "--die-with-parent", "--ro-bind", "/", "/", "--dev", "/dev", "--tmpfs", "/tmp")
         return "actif (bubblewrap)" if self._sandbox_works(base) else "indisponible : bubblewrap ne démarre pas dans cet environnement"
 
-    def run(self, kind: str, prompt: str, cwd: Path, label: str = "") -> AgentResult:
+    def healthy(self, cwd: Path) -> tuple[bool, str]:
+        """Sonde : l'agent répond-il à une demande triviale ?
+
+        Sert à distinguer « ce condensé pose problème » de « l'agent ne répond plus du
+        tout » (quota atteint, réseau coupé, connexion expirée). Renvoie (état, raison).
+        """
+        try:
+            reply = self.run("extract", f"Réponds uniquement par ce mot, sans rien d'autre : {PROBE_TOKEN}", cwd, "sonde", timeout=min(self.timeout, 180))
+        except AgentError as exc:
+            return False, str(exc)
+        if PROBE_TOKEN in reply.text:
+            return True, ""
+        return False, "réponse inattendue à la sonde : " + " ".join(reply.text.split())[-200:]
+
+    def run(self, kind: str, prompt: str, cwd: Path, label: str = "", timeout: Optional[int] = None) -> AgentResult:
         if not prompt.startswith(PIPELINE_SENTINEL):
             prompt = f"{PIPELINE_SENTINEL}\n{prompt}"
         command = self.command(kind)
@@ -164,7 +180,7 @@ class Agent:
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True,
             )
             try:
-                stdout, stderr = proc.communicate(timeout=self.timeout)
+                stdout, stderr = proc.communicate(timeout=timeout or self.timeout)
             except subprocess.TimeoutExpired:
                 try:
                     os.killpg(proc.pid, signal.SIGKILL)
@@ -172,7 +188,7 @@ class Agent:
                     proc.kill()
                 stdout, stderr = proc.communicate()
                 self._log(log_path, kind, command, prompt, stdout, stderr, "délai dépassé")
-                raise AgentError(f"l'agent a dépassé {self.timeout} s ({kind})")
+                raise AgentError(f"l'agent a dépassé {timeout or self.timeout} s ({kind})")
             seconds = time.time() - started
             text = stdout or ""
             try:

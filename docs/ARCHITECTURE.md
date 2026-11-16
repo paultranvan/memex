@@ -156,7 +156,8 @@ Pour chaque condensé, dans l'ordre chronologique :
    dossier où ranger.
 4. **Contrôle.** Le diff est vérifié contre le périmètre du rôle (voir §7). En cas de refus, un
    second essai reçoit la liste des fautes. Après trois passages en échec, le condensé part en
-   quarantaine et je suis prévenu.
+   quarantaine et je suis prévenu. Si c'est l'agent lui-même qui ne répond plus (quota atteint,
+   réseau coupé), le passage s'arrête sans compter d'échec : voir D39.
 5. **Comptabilité.** Le code ajoute la source et la date dans l'en-tête des pages touchées, écrit
    la ligne du journal, le registre des condensés traités, régénère l'index, complète `log.md`.
 6. **Commit et fusion.** Un commit par condensé, fusionné en avance rapide dans `main`.
@@ -393,6 +394,15 @@ Corriger d'office ce qui est cosmétique, annuler ce qui est hors périmètre, r
 destructif. Un second essai reçoit les fautes ; puis quarantaine. Toute erreur interne pendant le
 traitement d'un condensé compte comme un échec : un condensé ne peut pas bloquer les suivants.
 
+**D39 — Une panne de l'agent ne coûte aucun condensé.**
+Quand un appel à l'agent échoue, une sonde lui demande un mot. S'il répond, l'échec tient au
+condensé et compte. S'il ne répond pas, le passage s'arrête : aucun échec n'est compté, la file
+reste intacte, je suis prévenu une fois, et le passage suivant réessaie. De même, un agent qui
+rend la main sans page ni compte rendu est un échec, pas une session « sans suite ».
+*Pourquoi :* sans cela, un quota atteint pendant une reprise d'historique envoyait toute la file
+en quarantaine en trois passages, soit 45 minutes. Trouvé en relisant le code avant la première
+reprise réelle, pas en production.
+
 **D23 — Un rédacteur à la fois.**
 Un verrou unique couvre l'archiviste, le tisseur, le vérificateur et les approbations.
 
@@ -459,8 +469,8 @@ comptent autant que les documents.
 
 **Vérifié sur cette machine (2026-11-16) :**
 
-- 69 tests automatiques, dont 22 scénarios de bout en bout (trajet nominal, reprises, garde-fous,
-  quarantaine, revue, restauration, reconstruction, condensé forgé).
+- 71 tests automatiques, dont 24 scénarios de bout en bout (trajet nominal, reprises, garde-fous,
+  quarantaine, panne de l'agent, revue, restauration, reconstruction, condensé forgé).
 - Une relecture indépendante du code par un second agent, qui a reproduit cinq défauts (dont un
   condensé forgé capable d'écrire hors de sa boîte). Tous sont corrigés et couverts par un test.
 - Le balayeur sur mon historique réel : 66 condensés depuis 69 sessions, en 1,2 seconde.

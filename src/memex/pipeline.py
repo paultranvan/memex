@@ -39,11 +39,12 @@ RESULT_FILE = ".memex-result.json"
 @dataclass
 class Outcome:
     segment: str
-    status: str            # integre | rien | court | echec | quarantaine
+    status: str            # integre | rien | court | echec | quarantaine | indisponible
     title: str = ""
     dossier: str = ""
     pages: list[str] = field(default_factory=list)
     detail: str = ""
+    agent: bool = False    # l'échec vient d'un appel à l'agent, pas d'un refus des garde-fous
 
 
 class Server:
@@ -55,6 +56,8 @@ class Server:
         self.tz = local_tz(config.get("MEMEX_TZ"))
         self.lock_path = config.state_dir / "pipeline.lock"
         self.failures_path = config.state_dir / "failures.json"
+        self.down_path = config.state_dir / "agent-down.json"
+        self._down = False
 
     # ── mise en place ─────────────────────────────────────────────────────
     def init(self) -> bool:
@@ -281,7 +284,7 @@ class Server:
                 self.agent.run("edit", prompt, path, f"{seg.id}-t{attempt}")
             except AgentError as exc:
                 self.repo.drop_worktree(name)
-                return Outcome(seg.id, "echec", seg.title, detail=str(exc)[:300]), None
+                return Outcome(seg.id, "echec", seg.title, detail=str(exc)[:300], agent=True), None
             result = read_json(path / RESULT_FILE, {}) or {}
             (path / RESULT_FILE).unlink(missing_ok=True)
             today = seg.started.astimezone(self.tz).strftime("%Y-%m-%d")
@@ -295,6 +298,9 @@ class Server:
         summary = extracted.get("resume") or seg.title
         if not verdict.changed:
             self.repo.drop_worktree(name)
+            if not result:
+                # Ni page ni compte rendu : l'agent n'a pas travaillé. Le classer « sans suite » perdrait la session.
+                return Outcome(seg.id, "echec", seg.title, detail="l'agent n'a rien produit : ni page, ni compte rendu", agent=True), verdict
             return Outcome(seg.id, "rien", seg.title, detail=summary), verdict
         chosen = dossier or self._dossier_of_result(result, verdict.touched)
         outcome = Outcome(seg.id, "integre", seg.title, chosen, sorted(verdict.touched), summary)
@@ -345,7 +351,7 @@ class Server:
         try:
             extracted = self.extract(seg)
         except AgentError as exc:
-            return Outcome(seg.id, "echec", seg.title, detail=f"extraction : {exc}"[:300])
+            return Outcome(seg.id, "echec", seg.title, detail=f"extraction : {exc}"[:300], agent=True)
         if not extracted["elements"]:
             outcome = Outcome(seg.id, "rien", seg.title, detail=extracted.get("resume") or seg.title)
             self._record_only(seg, outcome)
@@ -374,10 +380,13 @@ class Server:
     def run(self) -> int:
         """Traite tout ce qui attend. Reboucle tant que de nouveaux condensés arrivent pendant le passage."""
         code, started, failed = 0, time.time(), set()
+        self._down = False
         try:
             with file_lock(self.lock_path):
                 for _round in range(50):
                     code |= self._run(started, failed)
+                    if self._down:
+                        break
                     waiting = [p for p in self.pending() if p.name not in failed]
                     if not waiting or time.time() - started > self.config.int("MEMEX_RUN_BUDGET_S"):
                         break
@@ -422,6 +431,15 @@ class Server:
                 if not self.repo.is_clean():
                     self.repo.reset_main_checkout()
                 outcome = Outcome(seg.id, "echec", seg.title, detail=f"erreur interne : {exc}"[:300])
+            if outcome.status == "echec" and outcome.agent:
+                healthy, why = self.agent.healthy(config.work)
+                if not healthy:
+                    # L'agent ne répond plus du tout : ce condensé n'y est pour rien. On ne compte
+                    # aucun échec et on arrête le passage, sinon toute la file finirait en quarantaine.
+                    outcome.status, outcome.detail = "indisponible", (why or outcome.detail)[:300]
+                    outcomes.append(outcome)
+                    self._down = True
+                    break
             if outcome.status == "echec":
                 failed.add(path.name)
                 entry = failures.get(seg.id) or {"count": 0}
@@ -439,15 +457,23 @@ class Server:
             outcomes.append(outcome)
             self.sync_out()
         tisseur = ""
-        if any(o.status == "integre" for o in outcomes) or human:
+        newly_down = False
+        if self._down:
+            left_over = len(self.pending())
+            newly_down = not self.down_path.exists()
+            if newly_down:
+                write_json(self.down_path, {"depuis": iso(), "erreur": outcomes[-1].detail})
+        elif any(o.status in ("integre", "rien", "echec", "quarantaine") for o in outcomes):
+            self.down_path.unlink(missing_ok=True)
+        if not self._down and (any(o.status == "integre" for o in outcomes) or human):
             try:
                 tisseur = self.run_tisseur()
             except Exception as exc:
                 self.repo.cleanup_stale()
                 tisseur = f"erreur interne ({str(exc)[:120]})"
         self.sync_out()
-        self._report(outcomes, tisseur, human, left_over)
-        return 1 if any(o.status in ("echec", "quarantaine") for o in outcomes) else 0
+        self._report(outcomes, tisseur, human, left_over, newly_down)
+        return 1 if any(o.status in ("echec", "quarantaine", "indisponible") for o in outcomes) else 0
 
     def _sweep_local_sources(self) -> None:
         """Les sessions tenues sur le serveur lui-même (Hermes par messagerie) entrent par la même porte."""
@@ -462,7 +488,7 @@ class Server:
         except Exception as exc:  # la capture locale ne doit jamais bloquer l'archivage
             eprint(f"memex : balayage local impossible ({exc})")
 
-    def _report(self, outcomes: list[Outcome], tisseur: str, human: list[str], left_over: int) -> None:
+    def _report(self, outcomes: list[Outcome], tisseur: str, human: list[str], left_over: int, newly_down: bool = False) -> None:
         integrated = [o for o in outcomes if o.status == "integre"]
         failed = [o for o in outcomes if o.status in ("echec", "quarantaine")]
         quiet = [o for o in outcomes if o.status in ("rien", "court")]
@@ -479,6 +505,9 @@ class Server:
         for outcome in failed:
             label = "mis en quarantaine" if outcome.status == "quarantaine" else "échec, nouvel essai au prochain passage"
             lines.append(f"⚠ {outcome.title or outcome.segment} : {label} — {outcome.detail}")
+        for outcome in outcomes:
+            if outcome.status == "indisponible":
+                lines.append(f"⚠ agent « {self.agent.name} » indisponible, passage interrompu sans rien perdre — {outcome.detail}")
         if left_over:
             lines.append(f"… {left_over} condensé(s) restent à traiter")
         if not lines:
@@ -490,9 +519,13 @@ class Server:
             level == "always"
             or (level == "changes" and (integrated or failed or tisseur))
             or (level == "failures" and failed)
+            or (level != "never" and newly_down)   # une seule fois par panne, pas à chaque passage
         )
         if wanted:
-            notify(self.config, f"memex : {len(integrated)} session(s) intégrée(s)" + (f", {len(failed)} en échec" if failed else ""), "\n".join(lines))
+            subject = f"memex : {len(integrated)} session(s) intégrée(s)" + (f", {len(failed)} en échec" if failed else "")
+            if newly_down:
+                subject += ", agent indisponible"
+            notify(self.config, subject, "\n".join(lines))
 
     # ── tisseur ───────────────────────────────────────────────────────────
     def run_tisseur(self, force: bool = False) -> str:
@@ -570,6 +603,7 @@ class Server:
             "quarantaine": len(list(self.config.quarantine.glob("*/*.md"))) if self.config.quarantine.is_dir() else 0,
             "revue_en_attente": [r.get("id") for r in reviews],
             "agent": self.agent.name,
+            "agent_indisponible": read_json(self.down_path, None) or "non",
             "bac_a_sable": self.agent.sandbox_state(),
             "vault": str(self.config.vault_dir) if self.config.vault_dir else "(désactivé)",
         }
