@@ -18,7 +18,7 @@ from memex.adapters.codex import CodexAdapter
 from memex.adapters.hermes import HermesAdapter
 from memex.agent import AgentError, parse_json_reply
 from memex.config import Config, parse_env_text
-from memex.index import build as build_index
+from memex.index import build as build_index, compact as compact_index
 from memex.lint import lint
 from memex.pages import LinkIndex, dossier_of, links, load_wiki, unlink
 from memex.pipeline import Server
@@ -558,6 +558,16 @@ class Guardrails(Sandbox):
         self.assertIn("auteur:\n  nom: Paul\ncode: 007\n", text)
         self.assertIn("sources:\n  - claude-code_abc_001\n", text)
 
+    def test_header_keeps_only_the_last_sources(self):
+        """Une page vivante touchée par des dizaines de sessions ne doit pas traîner un en-tête sans fin."""
+        target = self.repo.dir / "Sujets/Main/Main.md"
+        target.parent.mkdir(parents=True)
+        target.write_text("---\ntype: sujet\ntitre: Main\n---\n\nTexte.\n")
+        for number in range(1, 8):
+            self.server._stamp_pages(self.repo.dir, ["Sujets/Main/Main.md"], f"claude-code_s{number}_001")
+        meta, _body = frontmatter.parse(target.read_text())
+        self.assertEqual(meta["sources"], [f"claude-code_s{n}_001" for n in range(3, 8)])
+
     def test_verificateur_may_delete_pages_but_not_decisions(self):
         (self.tree / "Concepts/Tailscale.md").unlink()
         verdict = self.check("verificateur")
@@ -604,6 +614,26 @@ class WikiModel(Sandbox):
         self.assertIn(("Projets/Atlas/Atlas.md", "Projets/Solitaire/Solitaire.md"), unlinked)
         self.assertIn(("Projets/Atlas/Atlas.md", "Concepts/Réseau.md"), unlinked)
         self.assertEqual([c["entite"].lower() for c in report.concepts], ["tailscale"])
+
+
+    def test_most_shared_concepts_come_first_and_long_pages_are_flagged(self):
+        root = self.server_home / "wiki"
+
+        def page(dossier, entities, body="x"):
+            name = dossier.split("/")[-1]
+            target = root / dossier / f"{name}.md"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(f"---\ntype: projet\ntitre: {name}\nresume: r\nentites: [{', '.join(entities)}]\n---\n\n{body}\n", encoding="utf-8")
+
+        page("Projets/A", ["Apache", "systemd"], body="mot " * 400)
+        page("Projets/B", ["Apache", "systemd"])
+        page("Projets/C", ["systemd"])
+        concepts = lint(root).concepts
+        self.assertEqual([c["entite"] for c in concepts], ["systemd", "Apache"])     # trois dossiers avant deux
+        listing = compact_index(load_wiki(root), long_page=1000)
+        self.assertIn("Projets/A/A.md — A [déjà longue : ", listing)
+        self.assertNotIn("Projets/B/B.md — B [", listing)
+        self.assertNotIn("déjà longue", compact_index(load_wiki(root)))
 
 
 class Integration(Sandbox):

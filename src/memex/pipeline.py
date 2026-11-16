@@ -34,6 +34,10 @@ from .wikirepo import LandConflict, WikiRepo
 ELEMENT_TYPES = {"decision", "piste_abandonnee", "probleme", "fait", "preference", "etat", "synthese"}
 PACKAGE = Path(__file__).resolve().parent
 RESULT_FILE = ".memex-result.json"
+# L'en-tête d'une page ne garde que ses dernières sources : la provenance complète est dans le registre et dans git.
+SOURCES_KEPT = 5
+# Concepts candidats proposés au tisseur à chaque passage, les plus partagés d'abord.
+TISSEUR_CONCEPTS = 5
 
 
 @dataclass
@@ -158,7 +162,7 @@ class Server:
             updates: dict[str, Any] = {}
             if source_id:
                 sources = [s for s in frontmatter.as_list(page.meta.get("sources")) if s != source_id]
-                updates["sources"] = (sources + [source_id])[-40:]
+                updates["sources"] = (sources + [source_id])[-SOURCES_KEPT:]
             updates["maj"] = today
             text = target.read_text(encoding="utf-8")
             stamped = frontmatter.set_keys(text, updates)
@@ -264,6 +268,7 @@ class Server:
         # Nom fixe : les passages sont en série, et certains harnais créent un dossier d'état par répertoire.
         name = "ingest"
         feedback = ""
+        max_chars = self.config.int("MEMEX_MAX_PAGE_CHARS")
         for attempt in (1, 2):
             path = self.repo.new_worktree(name)
             base = self.repo.head("HEAD", cwd=path)
@@ -273,7 +278,8 @@ class Server:
                 conventions=self.conventions(path), meta=self.meta_block(seg),
                 dossier=self._where(dossier, new, extracted),
                 elements=json.dumps(extracted["elements"], ensure_ascii=False, indent=2),
-                index=index.compact(load_wiki(path)),
+                index=index.compact(load_wiki(path), long_page=int(max_chars * 0.6)),
+                max_chars=str(max_chars),
             )
             if feedback:
                 prompt += (
@@ -537,7 +543,7 @@ class Server:
             return ""
         work = {
             "mentions_sans_lien": report.unlinked[:40],
-            "concepts_candidats": report.concepts[:8],
+            "concepts_candidats": report.concepts[:TISSEUR_CONCEPTS],
             "liens_casses": report.broken[:20],
         }
         if not any(work.values()):

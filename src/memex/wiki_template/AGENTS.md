@@ -37,12 +37,13 @@ type: projet | sujet | decision | concept | synthese
 titre: Titre lisible
 resume: Une phrase, reprise telle quelle dans l'index.
 entites:
-  - Outils, services, techniques ou thèmes cités (sert à relier les dossiers entre eux)
+  - Outils, services, techniques ou thèmes durables qu'un autre dossier pourrait citer (une douzaine au plus)
 ```
 
 Pour une fiche de décision, s'ajoutent `date` (AAAA-MM-JJ), `statut` (`active`, `remplacee` ou
 `abandonnee`) et, le cas échéant, `remplace` / `remplacee_par` (un lien entre guillemets).
-Les champs `sources` et `maj` sont remplis automatiquement.
+Les champs `sources` (les cinq dernières sessions qui ont touché la page) et `maj` sont remplis
+automatiquement. La provenance complète est dans `.memex/ledger.jsonl` et dans l'historique git.
 
 ## Page vivante
 

@@ -118,7 +118,10 @@ def lint(root: Path, max_page_chars: int = 24000, min_dossiers: int = 2) -> Lint
         if len(item["dossiers"]) >= min_dossiers:
             report.concepts.append({
                 "entite": item["entite"], "dossiers": sorted(item["dossiers"]), "pages": sorted(item["pages"])[:12],
+                "nb_pages": len(item["pages"]),
             })
+    # Les plus partagés d'abord : le tisseur n'en traite que quelques-uns par passage.
+    report.concepts.sort(key=lambda c: (-len(c["dossiers"]), -c["nb_pages"], slugify(c["entite"])))
 
     report.stats = {
         "pages": len(pages),

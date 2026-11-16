@@ -83,13 +83,17 @@ def write(root: Path, pages: dict[str, Page]) -> bool:
     return True
 
 
-def compact(pages: dict[str, Page], limit: int = 12000) -> str:
-    """Liste courte des pages (chemin, titre, résumé) donnée aux agents pour s'orienter."""
+def compact(pages: dict[str, Page], limit: int = 12000, long_page: int = 0) -> str:
+    """Liste courte des pages (chemin, titre, résumé) donnée aux agents pour s'orienter.
+
+    `long_page` : au-delà de cette taille, la page est signalée comme déjà longue.
+    """
     lines = []
     for path, page in sorted(content_pages(pages).items()):
         if page.is_decision:
             continue
-        lines.append(f"- {path} — {page.title}" + (f" : {page.summary}" if page.summary else ""))
+        size = f" [déjà longue : {len(page.body)} caractères]" if long_page and len(page.body) > long_page else ""
+        lines.append(f"- {path} — {page.title}{size}" + (f" : {page.summary}" if page.summary else ""))
     for dossier in sorted({p.dossier for p in content_pages(pages).values() if p.is_decision}):
         count = sum(1 for p in pages.values() if p.is_decision and p.dossier == dossier)
         lines.append(f"- {dossier}/Décisions/ — {count} fiche(s) de décision")
