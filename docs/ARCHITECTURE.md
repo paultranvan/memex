@@ -408,7 +408,8 @@ reprise réelle, pas en production.
   sessions traînait 27 lignes de provenance ; la liste complète reste dans le registre et dans git.
 - *Le tisseur reçoit cinq concepts candidats, les plus partagés d'abord, et doit lire leurs pages.*
   Avec huit candidats par ordre alphabétique et la consigne « ne rien faire est acceptable », il
-  n'avait créé qu'une page transverse pour 16 candidats, sans lire les pages citées.
+  n'avait créé qu'une page transverse pour 16 candidats, sans lire les pages citées. Un candidat
+  qu'il écarte après lecture n'est reproposé que s'il gagne un dossier.
 - *Une page vivante déjà longue ne grossit plus.* La liste des pages la signale à l'archiviste, qui
   range le détail dans une page complémentaire par thème. Une page fourre-tout avait atteint
   30 000 caractères.
@@ -479,7 +480,7 @@ comptent autant que les documents.
 
 **Vérifié sur cette machine (2026-11-16) :**
 
-- 73 tests automatiques, dont 24 scénarios de bout en bout (trajet nominal, reprises, garde-fous,
+- 74 tests automatiques, dont 25 scénarios de bout en bout (trajet nominal, reprises, garde-fous,
   quarantaine, panne de l'agent, revue, restauration, reconstruction, condensé forgé).
 - Une relecture indépendante du code par un second agent, qui a reproduit cinq défauts (dont un
   condensé forgé capable d'écrire hors de sa boîte). Tous sont corrigés et couverts par un test.

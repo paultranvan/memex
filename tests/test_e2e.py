@@ -327,6 +327,26 @@ class EndToEnd(Sandbox):
         self.assertIn("Tailscale", self.wiki("index.md"))
         self.assertIn("tisseur", git(self.server_home / "wiki", "log", "--format=%an"))
 
+    def test_dismissed_concept_is_not_proposed_again_until_it_spreads(self):
+        os.environ["FAKE_AGENT_MODE"] = "no_concepts"            # le tisseur lit, puis écarte le candidat
+        self.two_projects_sharing_an_entity()
+        state = json.loads((self.server_home / "state/tisseur.json").read_text(encoding="utf-8"))
+        self.assertEqual(state["ecartes"]["tailscale"]["dossiers"], 2)
+        self.assertFalse((self.server_home / "wiki/Concepts/Tailscale.md").exists())
+        os.environ["FAKE_AGENT_MODE"] = "ok"
+        calls = len(self.agent_calls())
+        self.assertEqual(Server(self.config).run_tisseur(force=True), "")
+        self.assertEqual(len(self.agent_calls()), calls)         # rien à proposer : l'agent n'est pas appelé
+        self.claude_session(self.make_repo("troisieme", "git@github.com:moi/troisieme.git"), [
+            ("user", "Un troisième projet doit lui aussi choisir comment joindre son serveur."),
+            ("assistant", "DECISION: Réseau privé aussi | Ce projet passe par le même réseau privé. | Cohérence. @Tailscale"),
+        ], start="2026-11-14T09:00:00Z")
+        self.host_sync()
+        self.server_run()                                        # trois dossiers au lieu de deux : reproposé
+        self.assertTrue((self.server_home / "wiki/Concepts/Tailscale.md").exists())
+        state = json.loads((self.server_home / "state/tisseur.json").read_text(encoding="utf-8"))
+        self.assertNotIn("tailscale", state["ecartes"])
+
     def test_tisseur_cannot_rewrite_text(self):
         os.environ["FAKE_AGENT_MODE"] = "rewrite"
         self.two_projects_sharing_an_entity()

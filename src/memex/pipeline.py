@@ -25,7 +25,7 @@ from .pages import CONTENT_DIRS, PROJECTS, TOPICS, Page, load_wiki, parse_page, 
 from .segment import Segment
 from .util import (
     LockBusy, append_line, atomic_write, eprint, file_lock, iso, local_tz, now, read_json, safe_filename,
-    sha256_text, write_json,
+    sha256_text, slugify, write_json,
 )
 from .validate import Verdict, validate
 from .vault import Vault
@@ -541,18 +541,27 @@ class Server:
         report = lint(self.repo.dir, config.int("MEMEX_MAX_PAGE_CHARS"), config.int("MEMEX_TISSEUR_MIN_DOSSIERS"))
         if report.stats.get("pages", 0) < config.int("MEMEX_TISSEUR_MIN_PAGES") and not force:
             return ""
+        marker = config.state_dir / "tisseur.json"
+        state = read_json(marker, {}) or {}
+        # Un candidat déjà écarté n'est reproposé que s'il gagne un dossier : sinon les mêmes
+        # reviendraient à chaque passage et prendraient la place des suivants.
+        dismissed = state.get("ecartes") if isinstance(state.get("ecartes"), dict) else {}
+        candidates = [
+            c for c in report.concepts
+            if len(c["dossiers"]) > int((dismissed.get(slugify(c["entite"])) or {}).get("dossiers", 0))
+        ][:TISSEUR_CONCEPTS]
         work = {
             "mentions_sans_lien": report.unlinked[:40],
-            "concepts_candidats": report.concepts[:TISSEUR_CONCEPTS],
+            "concepts_candidats": candidates,
             "liens_casses": report.broken[:20],
         }
         if not any(work.values()):
             return ""
         digest = sha256_text(json.dumps(work, sort_keys=True, ensure_ascii=False))
-        marker = config.state_dir / "tisseur.json"
-        if (read_json(marker, {}) or {}).get("digest") == digest and not force:
+        if state.get("digest") == digest and not force:
             return ""  # mêmes pistes qu'au dernier passage : inutile de redemander
-        write_json(marker, {"digest": digest, "date": iso()})
+        state = {"digest": digest, "date": iso(), "ecartes": dismissed}
+        write_json(marker, state)
         name, feedback = "tisseur", ""
         for attempt in (1, 2):
             path = self.repo.new_worktree(name)
@@ -577,6 +586,15 @@ class Server:
             self.repo.drop_worktree(name)
             if attempt == 2:
                 return "refusé par les garde-fous"
+        # Le passage a abouti : un candidat resté sans page a été écarté en connaissance de cause.
+        still = {slugify(c["entite"]) for c in lint(path, config.int("MEMEX_MAX_PAGE_CHARS"), config.int("MEMEX_TISSEUR_MIN_DOSSIERS")).concepts}
+        for candidate in candidates:
+            key = slugify(candidate["entite"])
+            if key in still:
+                dismissed[key] = {"entite": candidate["entite"], "dossiers": len(candidate["dossiers"]), "date": iso()}
+            else:
+                dismissed.pop(key, None)
+        write_json(marker, {**state, "ecartes": dismissed})
         if not verdict.changed:
             self.repo.drop_worktree(name)
             return ""

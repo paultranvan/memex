@@ -120,7 +120,7 @@ def tisseur() -> None:
         if MODE == "rewrite":
             body += "\nPhrase ajoutée par le tisseur.\n"
         target.write_text((head + "---\n\n" if head else "") + body, encoding="utf-8")
-    for item in report.get("concepts_candidats", []):
+    for item in report.get("concepts_candidats", []) if MODE != "no_concepts" else []:
         links = "\n".join(f"- [[{p[:-3]}]]" for p in item["pages"])
         Path("Concepts").mkdir(exist_ok=True)
         Path("Concepts", f"{item['entite']}.md").write_text(
