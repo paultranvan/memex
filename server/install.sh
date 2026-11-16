@@ -136,6 +136,10 @@ fi
 
 step "Unités systemd"
 mkdir -p "$UNITS"
+UNIT_PATH="$BIN_DIR:$PATH"
+if [ "$USER_MODE" = "1" ] && ! command -v "$CURRENT_AGENT" >/dev/null 2>&1; then
+    warn "« $CURRENT_AGENT » est introuvable dans le PATH : installe-le, puis relance ce script."
+fi
 EXTRA_RW=""
 case "$VAULT" in ""|"$MEMEX_HOME_DIR"/*) ;; *) EXTRA_RW="$VAULT" ;; esac
 for unit in memex-run.service memex-run.path memex-run.timer memex-verif.service memex-verif.timer memex-backup.service memex-backup.timer; do
@@ -145,7 +149,18 @@ for unit in memex-run.service memex-run.path memex-run.timer memex-verif.service
     if [ "$USER_MODE" = "1" ]; then
         # Une unité utilisateur tourne déjà sous le bon compte, et le cloisonnement système n'y est pas disponible.
         sed -i -E '/^(User|Group|ProtectSystem|ReadWritePaths|ProtectHome|PrivateTmp|PrivateDevices|ProtectKernel(Tunables|Modules)|ProtectControlGroups|RestrictSUIDSGID|LockPersonality|RestrictRealtime|InaccessiblePaths|Environment=HOME)=?/d' "$UNITS/$unit"
-        sed -i -E "s#^Environment=PATH=.*#Environment=PATH=$BIN_DIR:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin#; s#^WantedBy=multi-user.target#WantedBy=default.target#" "$UNITS/$unit"
+        sed -i -E "s#^WantedBy=multi-user.target#WantedBy=default.target#" "$UNITS/$unit"
+        # L'unité reçoit le PATH du shell qui installe : ce qui trouve l'agent ici le trouvera là-bas
+        # (gestionnaires de versions comme mise, nvm ou asdf compris).
+        unit_tmp="$(mktemp)"
+        while IFS= read -r line; do
+            case "$line" in
+                Environment=PATH=*) printf 'Environment="PATH=%s"\n' "${UNIT_PATH//%/%%}" ;;
+                *) printf '%s\n' "$line" ;;
+            esac
+        done < "$UNITS/$unit" > "$unit_tmp"
+        cat "$unit_tmp" > "$UNITS/$unit"
+        rm -f "$unit_tmp"
     fi
 done
 sysctl_ daemon-reload
