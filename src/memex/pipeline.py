@@ -258,7 +258,8 @@ class Server:
         )
 
     def integrate(self, seg: Segment, extracted: dict) -> tuple[Outcome, Optional[Verdict]]:
-        name = f"ingest-{sha256_text(seg.id)[:12]}"
+        # Nom fixe : les passages sont en série, et certains harnais créent un dossier d'état par répertoire.
+        name = "ingest"
         feedback = ""
         for attempt in (1, 2):
             path = self.repo.new_worktree(name)
