@@ -1,0 +1,31 @@
+[Unit]
+Description=memex : passage de l'archiviste et du tisseur
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=@MEMEX_USER@
+Group=@MEMEX_USER@
+WorkingDirectory=@MEMEX_HOME@
+Environment=HOME=@MEMEX_HOME@
+Environment=PATH=@MEMEX_HOME@/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=@MEMEX_BIN@ server run
+Nice=10
+TimeoutStartSec=3600
+# Un passage en échec (agent indisponible, condensé refusé) ne doit pas marquer l'unité en panne.
+SuccessExitStatus=1
+# ── Cloisonnement : les agents n'écrivent que dans le dossier de memex ──
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=@MEMEX_HOME@ @EXTRA_RW@
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictRealtime=yes
+InaccessiblePaths=@DENY@

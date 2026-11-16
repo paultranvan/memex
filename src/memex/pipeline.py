@@ -365,18 +365,23 @@ class Server:
 
     # ── un passage complet ────────────────────────────────────────────────
     def run(self) -> int:
+        """Traite tout ce qui attend. Reboucle tant que de nouveaux condensés arrivent pendant le passage."""
+        code, started, failed = 0, time.time(), set()
         try:
             with file_lock(self.lock_path):
-                return self._run()
+                for _round in range(50):
+                    code |= self._run(started, failed)
+                    waiting = [p for p in self.pending() if p.name not in failed]
+                    if not waiting or time.time() - started > self.config.int("MEMEX_RUN_BUDGET_S"):
+                        break
         except LockBusy:
             eprint("memex : un passage est déjà en cours.")
-            return 0
+        return code
 
-    def _run(self) -> int:
+    def _run(self, started: float, failed: set) -> int:
         config = self.config
         self.init()
         self.repo.cleanup_stale()
-        started = time.time()
         self._sweep_local_sources()
         human = self.sync_in()
         failures = read_json(self.failures_path, {}) or {}
@@ -385,6 +390,8 @@ class Server:
         budget, batch = config.int("MEMEX_RUN_BUDGET_S"), config.int("MEMEX_BATCH_MAX")
         left_over = 0
         for path in self.pending():
+            if path.name in failed:
+                continue
             if len(outcomes) >= batch or time.time() - started > budget:
                 left_over += 1
                 continue
@@ -401,6 +408,7 @@ class Server:
                 continue
             outcome = self.process(seg)
             if outcome.status == "echec":
+                failed.add(path.name)
                 entry = failures.get(seg.id) or {"count": 0}
                 entry = {"count": entry["count"] + 1, "erreur": outcome.detail, "date": iso()}
                 failures[seg.id] = entry
@@ -418,8 +426,6 @@ class Server:
         tisseur = self.run_tisseur() if any(o.status == "integre" for o in outcomes) or human else ""
         self.sync_out()
         self._report(outcomes, tisseur, human, left_over)
-        if left_over:
-            atomic_write(config.trigger, iso() + "\n")  # relance un passage pour la suite
         return 1 if any(o.status in ("echec", "quarantaine") for o in outcomes) else 0
 
     def _sweep_local_sources(self) -> None:

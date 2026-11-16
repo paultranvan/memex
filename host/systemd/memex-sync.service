@@ -1,0 +1,9 @@
+[Unit]
+Description=memex : balayage des sessions et synchronisation avec le serveur
+Documentation=file://%h/.config/memex/memex.env
+
+[Service]
+Type=oneshot
+ExecStart=@MEMEX_BIN@ sync --quiet
+Nice=10
+TimeoutStartSec=300

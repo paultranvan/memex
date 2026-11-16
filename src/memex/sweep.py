@@ -87,17 +87,18 @@ class Sweeper:
         self.resolver = ProjectResolver()
         self.redactor = Redactor(config.list("MEMEX_REDACT_EXTRA"), config.bool("MEMEX_REDACT_EMAILS"))
 
-    def run(self, force: Iterable[str] = (), force_all: bool = False, dry_run: bool = False) -> SweepReport:
+    def run(self, force: Iterable[str] = (), force_all: bool = False, dry_run: bool = False, discard: bool = False) -> SweepReport:
+        """`discard` : marque tout l'existant comme déjà vu, sans rien produire (pas de reprise d'historique)."""
         report = SweepReport()
         try:
             with file_lock(self.config.data_dir / "sweep.lock"):
-                self._run(set(force), force_all, dry_run, report)
+                self._run(set(force), force_all or discard, dry_run, report, discard)
         except LockBusy:
             report.busy = True
         report.redactions = self.redactor.total
         return report
 
-    def _run(self, force: set[str], force_all: bool, dry_run: bool, report: SweepReport) -> None:
+    def _run(self, force: set[str], force_all: bool, dry_run: bool, report: SweepReport, discard: bool = False) -> None:
         config = self.config
         state = load_state(config)
         sessions = state["sessions"]
@@ -126,7 +127,11 @@ class Sweeper:
                 if entry.get("skip"):
                     report.exclude(entry["skip"])
                     continue
-                cwd = str(chunk.meta.get("cwd") or "")
+                if discard:
+                    entry["meta"]["files"], entry["meta"]["links"] = [], []
+                    report.exclude("historique laissé de côté")
+                    continue
+                cwd =str(chunk.meta.get("cwd") or "")
                 project = self.resolver.resolve(cwd)
                 reason = exclusion_reason(
                     cwd, project,

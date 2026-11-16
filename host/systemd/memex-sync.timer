@@ -1,0 +1,10 @@
+[Unit]
+Description=memex : synchronisation périodique
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=@INTERVAL@
+RandomizedDelaySec=20
+
+[Install]
+WantedBy=timers.target

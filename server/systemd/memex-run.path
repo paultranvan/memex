@@ -1,0 +1,9 @@
+[Unit]
+Description=memex : réveil à l'arrivée de nouveaux condensés
+
+[Path]
+PathChanged=@MEMEX_HOME@/raw/trigger
+Unit=memex-run.service
+
+[Install]
+WantedBy=multi-user.target

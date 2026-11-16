@@ -1,0 +1,13 @@
+{
+    "couchDB_URI": "https://couchdb.exemple.net",
+    "couchDB_USER": "memex-wiki",
+    "couchDB_PASSWORD": "À REMPLACER",
+    "couchDB_DBNAME": "memex-wiki",
+    "liveSync": true,
+    "syncOnSave": true,
+    "syncOnStart": true,
+    "encrypt": true,
+    "passphrase": "UNE PHRASE SECRÈTE PROPRE À CE VAULT",
+    "usePluginSync": false,
+    "isConfigured": true
+}

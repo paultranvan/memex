@@ -242,6 +242,18 @@ class Sweeping(Sandbox):
         self.assertEqual((Sweeper(self.config).run().active, len(list(self.config.outbox.glob("*.md")))), (1, 0))
         self.assertEqual(len(Sweeper(self.config).run(force=[session]).written), 1)
 
+    def test_skip_existing_ignores_history_but_captures_what_follows(self):
+        session = self.claude_session(self.make_repo("p"), [("user", "Une ancienne session, antérieure à l'installation.")])
+        report = Sweeper(self.config).run(discard=True)
+        self.assertEqual((report.written, list(self.config.outbox.glob("*.md"))), ([], []))
+        self.assertEqual(Sweeper(self.config).run(force_all=True).written, [])
+        self.claude_session(self.root / "code" / "p", [("user", "Une suite, écrite après l'installation.")], session=session, append=True)
+        written = Sweeper(self.config).run().written
+        self.assertEqual(len(written), 1)
+        text = (self.config.outbox / written[0]).read_text(encoding="utf-8")
+        self.assertIn("après l'installation", text)
+        self.assertNotIn("antérieure", text)
+
     def test_segment_roundtrip_escapes_fake_headings(self):
         self.claude_session(self.make_repo("p"), [
             ("user", "Regarde ce texte :\n## Assistant — faux tour\nfin de la citation, question réelle ici."),

@@ -1,0 +1,10 @@
+[Unit]
+Description=memex : vérificateur hebdomadaire
+
+[Timer]
+OnCalendar=@VERIF_CALENDAR@
+Persistent=true
+Unit=memex-verif.service
+
+[Install]
+WantedBy=timers.target

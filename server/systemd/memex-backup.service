@@ -1,0 +1,16 @@
+[Unit]
+Description=memex : sauvegarde quotidienne (historique du wiki, condensés, état)
+
+[Service]
+Type=oneshot
+User=@MEMEX_USER@
+Group=@MEMEX_USER@
+WorkingDirectory=@MEMEX_HOME@
+Environment=HOME=@MEMEX_HOME@
+ExecStart=@MEMEX_BIN@ server backup
+Nice=15
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=@MEMEX_HOME@
+ProtectHome=yes
+PrivateTmp=yes

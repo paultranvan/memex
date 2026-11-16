@@ -33,6 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--session", action="append", default=[])
     p.add_argument("--all", action="store_true")
     p.add_argument("--dry-run", action="store_true", help="n'écrit rien, montre ce qui serait produit")
+    p.add_argument("--skip-existing", action="store_true", help="marque les sessions existantes comme déjà vues, sans les capturer")
 
     sub.add_parser("ship", help="envoie les condensés en attente")
     sub.add_parser("pull", help="met à jour la copie locale du wiki")
@@ -128,7 +129,8 @@ def cmd_doctor(config: Config) -> int:
     check(config.path is not None, f"configuration : {config.path}", "aucun fichier memex.env trouvé")
     for name, key in (("claude-code", "MEMEX_CLAUDE_PROJECTS_DIR"), ("codex", "MEMEX_CODEX_SESSIONS_DIR"), ("hermes", "MEMEX_HERMES_DB")):
         if name in config.list("MEMEX_SOURCES"):
-            check(config.path_value(key).exists(), f"source {name} : {config.path_value(key)}", "introuvable sur cette machine")
+            found = config.path_value(key).exists()
+            print(("  ✓ " if found else "  – ") + f"source {name} : {config.path_value(key)}" + ("" if found else " (aucune session pour l'instant)"))
     if not config.server_ssh:
         check(False, "serveur", "MEMEX_SERVER_SSH est vide : les condensés s'accumulent sans partir")
     else:
@@ -249,7 +251,7 @@ def main(argv: list[str] | None = None) -> int:
     if command == "sweep":
         from .sweep import Sweeper
 
-        report = Sweeper(config).run(force=args.session, force_all=args.all, dry_run=args.dry_run)
+        report = Sweeper(config).run(force=args.session, force_all=args.all, dry_run=args.dry_run, discard=args.skip_existing)
         print(report.summary())
         if args.dry_run:
             print("\n".join(report.written))

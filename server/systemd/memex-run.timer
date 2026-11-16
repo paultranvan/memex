@@ -1,0 +1,10 @@
+[Unit]
+Description=memex : passage de sécurité (modifications faites dans Obsidian, discussions Hermes)
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=15min
+Unit=memex-run.service
+
+[Install]
+WantedBy=timers.target
