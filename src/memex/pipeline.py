@@ -152,12 +152,15 @@ class Server:
                 page = parse_page(relative, target.read_text(encoding="utf-8"))
             except OSError:
                 continue
-            meta = dict(page.meta)
+            updates: dict[str, Any] = {}
             if source_id:
-                sources = [s for s in frontmatter.as_list(meta.get("sources")) if s != source_id]
-                meta["sources"] = (sources + [source_id])[-40:]
-            meta["maj"] = today
-            atomic_write(target, frontmatter.dump(meta, page.body))
+                sources = [s for s in frontmatter.as_list(page.meta.get("sources")) if s != source_id]
+                updates["sources"] = (sources + [source_id])[-40:]
+            updates["maj"] = today
+            text = target.read_text(encoding="utf-8")
+            stamped = frontmatter.set_keys(text, updates)
+            if stamped != text:
+                atomic_write(target, stamped)
 
     # ── rattachement d'une session à un dossier ───────────────────────────
     def _projects(self, root: Path) -> dict:
@@ -406,10 +409,18 @@ class Server:
                 os.replace(path, target)
                 outcomes.append(Outcome(path.stem, "quarantaine", path.name, detail=f"condensé illisible : {exc}"[:200]))
                 continue
+            # L'appareil est celui de la boîte où la porte a rangé le fichier, jamais ce que dit l'en-tête.
+            seg.device = segment_mod.safe_token(path.parent.name, "inconnu")
             if seg.id in done:
                 self._archive(seg)
                 continue
-            outcome = self.process(seg)
+            try:
+                outcome = self.process(seg)
+            except Exception as exc:  # un condensé ne doit jamais bloquer les suivants
+                self.repo.cleanup_stale()
+                if not self.repo.is_clean():
+                    self.repo.reset_main_checkout()
+                outcome = Outcome(seg.id, "echec", seg.title, detail=f"erreur interne : {exc}"[:300])
             if outcome.status == "echec":
                 failed.add(path.name)
                 entry = failures.get(seg.id) or {"count": 0}
@@ -426,7 +437,13 @@ class Server:
             write_json(self.failures_path, failures)
             outcomes.append(outcome)
             self.sync_out()
-        tisseur = self.run_tisseur() if any(o.status == "integre" for o in outcomes) or human else ""
+        tisseur = ""
+        if any(o.status == "integre" for o in outcomes) or human:
+            try:
+                tisseur = self.run_tisseur()
+            except Exception as exc:
+                self.repo.cleanup_stale()
+                tisseur = f"erreur interne ({str(exc)[:120]})"
         self.sync_out()
         self._report(outcomes, tisseur, human, left_over)
         return 1 if any(o.status in ("echec", "quarantaine") for o in outcomes) else 0

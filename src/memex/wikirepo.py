@@ -111,6 +111,22 @@ class WikiRepo:
         self.git("worktree", "add", "--quiet", "-b", f"memex/{name}", str(path), base)
         return path
 
+    def heal_worktree(self, path: Path) -> None:
+        """Rétablit le fichier `.git` d'une copie de travail si un agent l'a remplacé ou supprimé."""
+        path = Path(path)
+        link = path / ".git"
+        expected = f"gitdir: {self.dir / '.git' / 'worktrees' / path.name}\n"
+        try:
+            if link.is_file() and not link.is_symlink() and link.read_text(encoding="utf-8") == expected:
+                return
+        except OSError:
+            pass
+        if link.is_dir() and not link.is_symlink():
+            shutil.rmtree(link, ignore_errors=True)
+        else:
+            link.unlink(missing_ok=True)
+        link.write_text(expected, encoding="utf-8")
+
     def drop_worktree(self, name: str, keep_branch: bool = False) -> None:
         path = self.worktree_path(name)
         self.git("worktree", "remove", "--force", str(path), check=False)

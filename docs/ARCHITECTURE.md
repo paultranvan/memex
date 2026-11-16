@@ -250,6 +250,7 @@ l'historique : `memex server restore "Chemin/Page.md"`.
 | Un secret part dans un condensé | Masquage sur l'hôte, avant tout envoi. Fichiers en mode 600 |
 | Une session de travail est capturée | Exclusions par chemin et par dépôt ; `.memex-ignore` ; `#memex-off` |
 | Une clé d'hôte est volée | Elle ne donne que la porte : dépôt de condensés, lecture du wiki |
+| Un condensé forgé vise un autre dossier | L'appareil est imposé par la boîte de dépôt ; aucun champ de l'en-tête ne forme un chemin |
 | Le serveur est compromis | Il ne peut ouvrir aucune connexion vers mes machines (sens unique, règles Tailscale) |
 | Un condensé contient une instruction malveillante | L'extraction n'a aucun outil. L'intégration n'écrit que dans sa copie de travail. Le diff est contrôlé |
 | Un agent écrit ailleurs que prévu | Bac à sable par appel : système en lecture seule, `~/.ssh` masqué, écriture limitée à la copie de travail et à l'état du harnais |
@@ -379,7 +380,8 @@ Copie de travail git jetable, contrôle, puis fusion en avance rapide. *Pourquoi
 
 **D20 — Le modèle rédige, le code tient les comptes.**
 Index, journal, registre, provenance et `log.md` sont générés. *Pourquoi :* c'est ce qu'un modèle
-fait le moins fiablement, et ce qu'un programme fait sans erreur.
+fait le moins fiablement, et ce qu'un programme fait sans erreur. Quand le code complète l'en-tête
+d'une page, il ne remplace que ses propres champs : le reste, écrit à la main, est conservé tel quel.
 
 **D21 — L'archiviste en deux temps.**
 Extraction sans outil, puis intégration. *Pourquoi :* la plupart des sessions s'arrêtent à
@@ -388,7 +390,8 @@ et le texte venu de l'extérieur ne rencontre jamais un agent doté d'outils.
 
 **D22 — Les garde-fous sont vérifiés sur le diff.**
 Corriger d'office ce qui est cosmétique, annuler ce qui est hors périmètre, refuser ce qui est
-destructif. Un second essai reçoit les fautes ; puis quarantaine.
+destructif. Un second essai reçoit les fautes ; puis quarantaine. Toute erreur interne pendant le
+traitement d'un condensé compte comme un échec : un condensé ne peut pas bloquer les suivants.
 
 **D23 — Un rédacteur à la fois.**
 Un verrou unique couvre l'archiviste, le tisseur, le vérificateur et les approbations.
@@ -456,12 +459,19 @@ comptent autant que les documents.
 
 **Vérifié sur cette machine (2026-11-16) :**
 
-- 60 tests automatiques, dont 20 scénarios de bout en bout (trajet nominal, reprises, garde-fous,
-  quarantaine, revue, restauration, reconstruction).
+- 69 tests automatiques, dont 22 scénarios de bout en bout (trajet nominal, reprises, garde-fous,
+  quarantaine, revue, restauration, reconstruction, condensé forgé).
+- Une relecture indépendante du code par un second agent, qui a reproduit cinq défauts (dont un
+  condensé forgé capable d'écrire hors de sa boîte). Tous sont corrigés et couverts par un test.
 - Le balayeur sur mon historique réel : 66 condensés depuis 69 sessions, en 1,2 seconde.
 - Le pipeline complet avec un vrai modèle (Claude, via `claude -p`) sur six sessions réelles : six
   intégrations, aucun échec, quatre pages de concept créées par le tisseur.
+- Le même pipeline avec Hermes comme rédacteur (son modèle par défaut), dans le bac à sable, sur
+  quatre sessions réelles : trois intégrations, une session jugée sans suite, aucun échec.
+- Le vérificateur avec un vrai modèle, dans le bac à sable : deux actions proposées, une approuvée
+  et appliquée, une refusée et mémorisée.
 - Les trois harnais (Hermes, Claude Code, Codex), aux trois niveaux de droits, dans le bac à sable.
+- L'exclusion des sessions du pipeline, sur la base réelle d'Hermes.
 - La porte SSH face à un vrai `sshd` : shell, commande arbitraire, autre dépôt et écriture refusés.
 - Les deux installeurs, dans un répertoire personnel jetable ; les unités avec `systemd-analyze`.
 
@@ -470,8 +480,8 @@ comptent autant que les documents.
 - L'installation réelle sur le serveur : mode système, unités cloisonnées, et surtout **le bac à
   sable à l'intérieur de l'unité systemd**. `memex server status` dit s'il est actif.
 - Le client LiveSync sans écran, Tailscale, la passerelle de messagerie d'Hermes et son skill.
+- Le pipeline complet avec Codex comme rédacteur (seuls ses appels unitaires l'ont été).
 - L'injection du hook `SessionStart` dans Codex (un rapport de bogue existe sur une version).
-- Le vérificateur avec un vrai modèle (testé seulement avec le faux agent).
 - Le chemin sans systemd (cron), macOS, et les formats réels des exports ChatGPT et claude.ai.
 
 ## 11. Limites connues et suites possibles

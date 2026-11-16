@@ -216,6 +216,49 @@ class EndToEnd(Sandbox):
         after = self.wiki("Projets/Solitaire/Décisions/2026-11-12 Scores côté serveur.md")
         self.assertEqual(before, after)
 
+    def test_forged_segment_header_cannot_write_outside_its_inbox(self):
+        """Une clé d'hôte volée ne doit pas pouvoir déposer un fichier dans le wiki par un en-tête forgé."""
+        self.solitaire_session()
+        Sweeper(self.config).run()
+        forged = next(self.config.outbox.glob("*.md"))
+        text = forged.read_text(encoding="utf-8")
+        forged.write_text(text.replace("device: portable", 'device: "../../wiki/Projets/Pwn"').replace("source: claude-code", 'source: "../../../wiki/x"'), encoding="utf-8")
+        ship(self.config)
+        self.server_run()
+        home = self.server_home
+        self.assertFalse((home / "wiki/Projets/Pwn").exists())
+        stray = [p for p in home.rglob("*") if p.is_file() and "raw" not in p.parts and "wiki" not in p.parts and "work" not in p.parts
+                 and "state" not in p.parts and "logs" not in p.parts]
+        self.assertEqual(stray, [])
+        archived = list((home / "raw/archive").rglob("*.md"))
+        self.assertEqual([p.relative_to(home / "raw/archive").parts[0] for p in archived], ["portable"])
+        self.assertEqual(git(home / "wiki", "status", "--porcelain"), "")
+        self.assertTrue(all(p.parent == home / "raw/extracts" for p in (home / "raw/extracts").rglob("*.json")))
+
+    def test_internal_error_counts_as_a_failure_and_never_blocks_the_queue(self):
+        from unittest import mock
+
+        self.solitaire_session()
+        self.claude_session(self.make_repo("autre", "git@github.com:moi/autre.git"), [
+            ("user", "Un second projet, pour lequel il faut décider du langage à utiliser."),
+            ("assistant", "DECISION: Écrire en Rust | Le projet est écrit en Rust. | Pour les performances."),
+        ], start="2026-11-13T09:00:00Z")
+        self.host_sync()
+        real = Server.integrate
+
+        def flaky(server, seg, extracted):
+            if seg.project == "solitaire":
+                raise RuntimeError("panne simulée au milieu de l'intégration")
+            return real(server, seg, extracted)
+
+        with mock.patch.object(Server, "integrate", flaky):
+            for _ in range(3):
+                self.assertEqual(self.server_run(), 1)
+        self.assertIn("Rust", self.wiki("Projets/Autre/Autre.md"))        # le suivant est passé quand même
+        self.assertEqual(len(list((self.server_home / "raw/quarantine").rglob("*.md"))), 1)
+        self.assertEqual(Server(self.config).pending(), [])
+        self.assertEqual(git(self.server_home / "wiki", "status", "--porcelain"), "")
+
     def test_failing_agent_leaves_segment_for_next_run(self):
         self.solitaire_session()
         self.host_sync()

@@ -148,6 +148,47 @@ def dump(data: dict[str, Any], body: str) -> str:
     return f"---\n{dump_header(data)}\n---\n\n{body}" if body else f"---\n{dump_header(data)}\n---\n"
 
 
+_TOP_KEY = re.compile(r"^([^\s#-][^:]*?)\s*:(\s|$)")
+
+
+def set_keys(text: str, updates: dict[str, Any]) -> str:
+    """Pose ou remplace des champs de l'en-tête sans réécrire les autres lignes.
+
+    L'en-tête d'une page peut venir d'Obsidian ou d'un modèle et contenir du YAML
+    que ce module ne sait pas relire fidèlement (blocs imbriqués, commentaires) :
+    on n'y touche donc pas, on ne remplace que les champs demandés.
+    """
+    if not updates:
+        return text
+    lines = text.split("\n")
+    close = None
+    if lines and lines[0].strip() == "---":
+        close = next((i for i in range(1, len(lines)) if lines[i].strip() in ("---", "...")), None)
+    if close is None:
+        return dump(dict(updates), text)
+    head = lines[1:close]
+    for key, value in updates.items():
+        fresh = dump_header({key: value}).split("\n")
+        start = None
+        for index, line in enumerate(head):
+            match = _TOP_KEY.match(line)
+            if match and match.group(1).strip() == key:
+                start = index
+                break
+        if start is None:
+            while head and not head[-1].strip():
+                head.pop()
+            head.extend(fresh)
+            continue
+        end = start + 1
+        while end < len(head) and not (_TOP_KEY.match(head[end]) or head[end].startswith("#")):
+            end += 1
+        while end > start + 1 and not head[end - 1].strip():
+            end -= 1
+        head[start:end] = fresh
+    return "\n".join(lines[:1] + head + lines[close:])
+
+
 def as_list(value: Any) -> list[str]:
     if value is None or value == "":
         return []

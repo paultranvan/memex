@@ -14,7 +14,12 @@ from ..util import parse_ts
 from . import Adapter, SessionRef, clean_human, is_pipeline, mark_final
 
 _EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
-_META_TYPES = (b'{"type":"ai-title"', b'{"type":"pr-link"')
+# Lignes volumineuses et sans paroles : écartées sans même les décoder. Tout type inconnu est lu.
+_TECHNICAL = tuple(b'{"type":"' + name + b'"' for name in (
+    b"api-request", b"api-request-blob", b"api-request-shape", b"file-history-snapshot", b"mode",
+    b"permission-mode", b"session-owner", b"atis-latch", b"last-prompt", b"tools-used", b"queue-operation",
+    b"cost-state", b"bridge-session", b"summary", b"instructions", b"attachment", b"system",
+))
 
 
 class ClaudeCodeAdapter(Adapter):
@@ -46,7 +51,7 @@ class ClaudeCodeAdapter(Adapter):
                 if not raw.endswith(b"\n"):
                     break  # ligne en cours d'écriture : on la reprendra au prochain passage
                 offset += len(raw)
-                if raw.startswith(b'{"type":"') and not raw.startswith(_META_TYPES):
+                if raw.startswith(_TECHNICAL):
                     continue
                 try:
                     entry = json.loads(raw)

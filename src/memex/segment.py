@@ -17,6 +17,13 @@ from .util import UTC, iso, parse_ts
 
 FORMAT = "memex/segment-1"
 _NAME = re.compile(r"^[A-Za-z0-9._-]{1,200}\.md$")
+_UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def safe_token(value: Any, fallback: str = "x") -> str:
+    """Un identifiant venu d'un condensé (source, session, appareil) : jamais de `/` ni de `..`."""
+    token = re.sub(r"\.{2,}", ".", _UNSAFE.sub("-", str(value or ""))).strip(".-")[:120]
+    return token or fallback
 ROLE_LABEL = {"user": "Utilisateur", "assistant": "Assistant"}
 _HEADING = re.compile(r"^## (Utilisateur|Assistant)(?: — (.*))?$")
 
@@ -144,9 +151,9 @@ def load(path: Path) -> Segment:
     flush()
     started = parse_ts(head.get("started")) or dt.datetime.fromtimestamp(Path(path).stat().st_mtime, UTC)
     return Segment(
-        source=str(head.get("source", "")),
-        device=str(head.get("device", "")),
-        session=str(head.get("session", "")),
+        source=safe_token(head.get("source"), "inconnu"),
+        device=safe_token(head.get("device"), "inconnu"),
+        session=safe_token(head.get("session"), "inconnu"),
         seq=int(head.get("seq") or 1),
         messages=messages,
         started=started,

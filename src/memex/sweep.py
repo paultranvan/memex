@@ -108,6 +108,9 @@ class Sweeper:
         for adapter in self.adapters:
             for ref in adapter.discover():
                 entry = sessions.get(ref.key) or {"cursor": 0, "seq": 0, "meta": {}}
+                if ref.size < int(entry.get("cursor") or 0) and ref.path.suffix == ".jsonl":
+                    # Fichier réécrit plus court (rotation, troncature) : le curseur ne veut plus rien dire.
+                    entry["cursor"] = 0
                 if ref.size <= int(entry.get("cursor") or 0):
                     continue
                 report.sessions += 1

@@ -7,13 +7,14 @@ ce qui est destructif fait échouer le passage.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import frontmatter
 from .pages import (
-    CONCEPTS, CONTENT_DIRS, JOURNAL, MANAGED_FILES, PROTECTED_FILES, infer_type, is_decision_path, is_hidden,
-    parse_page, safe_name, unlink,
+    CONCEPTS, CONTENT_DIRS, JOURNAL, MANAGED_FILES, PROTECTED_FILES, LinkIndex, infer_type, is_decision_path,
+    is_hidden, links, parse_page, safe_name, unlink,
 )
 from .util import atomic_write
 from .wikirepo import WikiRepo
@@ -50,6 +51,20 @@ def normalize_for_links(text: str) -> tuple[dict, str]:
     meta = {k: v for k, v in meta.items() if k not in TISSEUR_MUTABLE}
     body = _SEE_ALSO.sub("", unlink(body))
     return meta, re.sub(r"\s+", " ", body).strip()
+
+
+def _lost_links(old: str, new: str, known) -> list[str]:
+    """Liens présents avant et absents après. Corriger un lien qui ne menait nulle part reste permis."""
+    def targets(text: str) -> Counter:
+        body = _SEE_ALSO.sub("", frontmatter.parse(text)[1])
+        return Counter(target.lower() for target, _label in links(body))
+
+    before, after = targets(old), targets(new)
+    lost = []
+    for target, count in before.items():
+        if after.get(target, 0) < count and (known is None or known.resolve(target) is not None):
+            lost.append(target)
+    return sorted(lost)
 
 
 def _decision_change_allowed(old: str, new: str) -> bool:
@@ -94,8 +109,10 @@ def validate(repo: WikiRepo, cwd: Path, base: str, role: str, today: str, max_pa
     assert role in ROLES
     verdict = Verdict()
     cwd = Path(cwd)
+    repo.heal_worktree(cwd)
     repo.stage_all(cwd)
     _fix_names(repo, cwd, base, verdict)
+    known = LinkIndex(repo.git("ls-tree", "-r", "--name-only", "-z", base, cwd=cwd).split("\0")) if role == "tisseur" else None
 
     for status, path in repo.changes(cwd, base):
         top = path.split("/")[0]
@@ -139,6 +156,13 @@ def validate(repo: WikiRepo, cwd: Path, base: str, role: str, today: str, max_pa
                         f"{path} : le tisseur a changé le texte ; il ne peut qu'ajouter des liens et une section « Voir aussi »"
                     )
                     continue
+                lost = _lost_links(old, new, known)
+                if lost:
+                    verdict.errors.append(
+                        f"{path} : le tisseur a retiré ou redirigé un lien existant ({', '.join(lost[:3])}) ; "
+                        "seul un lien cassé peut être corrigé"
+                    )
+                    continue
         elif role == "verificateur":
             if existing_decision:
                 verdict.errors.append(f"{path} : une fiche de décision ne se modifie ni ne se supprime")
@@ -166,17 +190,19 @@ def validate(repo: WikiRepo, cwd: Path, base: str, role: str, today: str, max_pa
         if not page.body.strip():
             verdict.errors.append(f"{path} : page vide")
             continue
-        fixed = dict(page.meta)
-        if not fixed.get("type"):
-            fixed = {"type": infer_type(path), **fixed}
-        if not fixed.get("titre"):
-            fixed["titre"] = page.title
+        missing: dict = {}
+        if not page.meta.get("type"):
+            missing["type"] = infer_type(path)
+        if not page.meta.get("titre"):
+            missing["titre"] = page.title
         if is_decision_path(path):
-            fixed.setdefault("date", today)
-            fixed.setdefault("statut", "active")
-        if fixed != page.meta:
-            atomic_write(cwd / path, frontmatter.dump(fixed, page.body))
-        if not fixed.get("resume") and not is_decision_path(path):
+            if not page.meta.get("date"):
+                missing["date"] = today
+            if not page.meta.get("statut"):
+                missing["statut"] = "active"
+        if missing:
+            atomic_write(cwd / path, frontmatter.set_keys(text, missing))
+        if not page.meta.get("resume") and not is_decision_path(path):
             verdict.warnings.append(f"{path} : pas de champ `resume` dans l'en-tête")
         if len(page.body) > max_page_chars:
             verdict.warnings.append(f"{path} : page longue ({len(page.body)} caractères)")

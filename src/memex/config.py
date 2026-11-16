@@ -1,7 +1,7 @@
 """Configuration : un fichier `KEY=VALUE` commun à l'hôte et au serveur.
 
 Ordre de résolution : variable d'environnement > fichier > valeur par défaut.
-Le fichier est aussi lisible par un shell (`. memex.env`).
+Le fichier est lu par ce module, jamais exécuté : ne pas le charger dans un shell.
 """
 from __future__ import annotations
 

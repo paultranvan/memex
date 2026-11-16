@@ -48,6 +48,20 @@ class Frontmatter(unittest.TestCase):
         self.assertEqual(again, meta)
         self.assertEqual(body2, body)
 
+    def test_set_keys_touches_only_the_requested_fields(self):
+        text = (
+            "---\ntype: projet\n# commentaire gardé\nauteur:\n  nom: Paul\n  role: dev\nresume: |\n  ligne 1\n  ligne 2\n"
+            "code: 007\nsources:\n  - ancien\nmaj: 2026-01-01\n---\nCorps collé à l'en-tête.\n"
+        )
+        out = frontmatter.set_keys(text, {"sources": ["ancien", "nouveau"], "maj": "2026-11-16", "statut": "active"})
+        for kept in ("# commentaire gardé", "auteur:\n  nom: Paul\n  role: dev", "resume: |\n  ligne 1\n  ligne 2", "code: 007"):
+            self.assertIn(kept, out)
+        self.assertIn("sources:\n  - ancien\n  - nouveau\nmaj: 2026-11-16\nstatut: active\n---\nCorps collé à l'en-tête.\n", out)
+        self.assertEqual(frontmatter.set_keys(out, {"maj": "2026-11-16"}), out)          # idempotent
+        self.assertEqual(frontmatter.set_keys(text, {}), text)
+        bare = frontmatter.set_keys("# Titre\n\ntexte\n", {"type": "sujet"})
+        self.assertTrue(bare.startswith("---\ntype: sujet\n---\n\n# Titre"))
+
     def test_page_without_header(self):
         self.assertEqual(frontmatter.parse("# Titre\n\ntexte"), ({}, "# Titre\n\ntexte"))
         self.assertEqual(frontmatter.parse("---\npas fermé\n"), ({}, "---\npas fermé\n"))
@@ -155,6 +169,21 @@ class Adapters(Sandbox):
         ref = next(adapter.discover())
         self.assertEqual([m.text for m in adapter.read(ref, chunk.cursor, chunk.meta).messages], ["La suite."])
 
+    def test_claude_code_reads_turns_whatever_the_key_order(self):
+        """Une version qui écrirait `type` en première clé ne doit pas faire disparaître les paroles."""
+        folder = self.projects / "p"
+        folder.mkdir(parents=True)
+        lines = [
+            {"type": "user", "message": {"role": "user", "content": "Question avec type en tête."}, "origin": {"kind": "human"}, "cwd": "/x", "timestamp": "2026-11-12T09:00:00Z"},
+            {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Réponse."}]}, "timestamp": "2026-11-12T09:01:00Z"},
+            {"type": "api-request", "params": {"messages": [{"type": "user", "content": "bruit technique"}]}},
+            {"type": "type-inconnu-du-futur", "x": 1},
+        ]
+        (folder / "s1.jsonl").write_text("".join(json.dumps(line, separators=(",", ":")) + "\n" for line in lines))
+        adapter = ClaudeCodeAdapter(self.projects)
+        chunk = adapter.read(next(adapter.discover()), 0, {})
+        self.assertEqual([m.text for m in chunk.messages], ["Question avec type en tête.", "Réponse."])
+
     def test_claude_code_ignores_partial_last_line(self):
         repo = self.make_repo("p")
         session = self.claude_session(repo, [("user", "Complet.")])
@@ -253,6 +282,29 @@ class Sweeping(Sandbox):
         text = (self.config.outbox / written[0]).read_text(encoding="utf-8")
         self.assertIn("après l'installation", text)
         self.assertNotIn("antérieure", text)
+
+    def test_rewritten_shorter_transcript_is_read_again(self):
+        repo = self.make_repo("p")
+        session = self.claude_session(repo, [("user", "Première version, assez longue pour dépasser la suivante. " * 5)])
+        Sweeper(self.config).run()
+        path = next(self.projects.rglob(f"{session}.jsonl"))
+        path.unlink()
+        self.claude_session(repo, [("user", "Fichier réécrit plus court.")], session=session)
+        written = Sweeper(self.config).run().written
+        self.assertEqual(len(written), 1)
+        self.assertIn("réécrit plus court", (self.config.outbox / written[0]).read_text(encoding="utf-8"))
+
+    def test_segment_header_cannot_carry_a_path(self):
+        from memex.segment import safe_token
+
+        self.assertEqual(safe_token("../../wiki/Projets/Reel"), "wiki-Projets-Reel")
+        self.assertEqual(safe_token(".."), "x")
+        self.assertEqual(safe_token("portable-2.local"), "portable-2.local")
+        target = self.root / "forge.md"
+        target.write_text("---\nformat: memex/segment-1\nsource: ../../x\ndevice: ../../y\nsession: a/../../b\nseq: 1\n---\n\n## Utilisateur\n\ntexte\n")
+        loaded = segment_mod.load(target)
+        self.assertNotIn("/", loaded.id + loaded.device)
+        self.assertNotIn("..", loaded.id + loaded.device)
 
     def test_segment_roundtrip_escapes_fake_headings(self):
         self.claude_session(self.make_repo("p"), [
@@ -468,6 +520,43 @@ class Guardrails(Sandbox):
         self.assertEqual(self.server.dossier_for(root, seg), ("Sujets/Memex", False))   # correspondance périmée ignorée
         (root / "Projets/Memex").mkdir(parents=True)
         self.assertEqual(self.server.dossier_for(root, seg), ("Projets/Memex", False))
+
+    def test_tisseur_cannot_redirect_an_existing_link_but_may_fix_a_broken_one(self):
+        page = self.tree / "Projets/P/P.md"
+        base_text = page.read_text() + "\nVoir [[Concepts/Tailscale|le réseau]] et [[Page absente|autre chose]].\n"
+        page.write_text(base_text)
+        self.repo.commit_all(self.tree, "liens de départ", "memex")
+        self.base = self.repo.head("HEAD", cwd=self.tree)
+        (self.tree / "Concepts/Autre.md").write_text("---\ntype: concept\ntitre: Autre\nresume: x.\n---\n\nTexte.\n")
+        page.write_text(base_text.replace("[[Concepts/Tailscale|le réseau]]", "[[Concepts/Autre|le réseau]]"))
+        verdict = self.check("tisseur")
+        self.assertFalse(verdict.ok)
+        self.assertIn("redirigé", verdict.errors[0])
+        page.write_text(base_text.replace("[[Page absente|autre chose]]", "[[Concepts/Autre|autre chose]]"))
+        self.assertTrue(self.check("tisseur").ok)        # corriger un lien cassé reste permis
+
+    def test_agent_cannot_break_the_git_link_of_its_worktree(self):
+        link = self.tree / ".git"
+        original = link.read_text()
+        link.write_text("gitdir: /dev/null\n")
+        (self.tree / "Projets/P/P.md").write_text((self.tree / "Projets/P/P.md").read_text() + "\nAjout.\n")
+        verdict = self.check("archiviste")
+        self.assertTrue(verdict.ok, verdict.errors)
+        self.assertEqual(link.read_text(), original)
+        link.unlink()
+        link.mkdir()
+        (link / "config").write_text("[core]\n")
+        self.assertTrue(self.check("archiviste").ok)
+        self.assertEqual(link.read_text(), original)
+
+    def test_stamping_preserves_hand_written_header_lines(self):
+        target = self.repo.dir / "Sujets/Main/Main.md"
+        target.parent.mkdir(parents=True)
+        target.write_text("---\ntype: sujet\ntitre: Main\nauteur:\n  nom: Paul\ncode: 007\n---\n\nTexte.\n")
+        self.server._stamp_pages(self.repo.dir, ["Sujets/Main/Main.md"], "claude-code_abc_001")
+        text = target.read_text()
+        self.assertIn("auteur:\n  nom: Paul\ncode: 007\n", text)
+        self.assertIn("sources:\n  - claude-code_abc_001\n", text)
 
     def test_verificateur_may_delete_pages_but_not_decisions(self):
         (self.tree / "Concepts/Tailscale.md").unlink()
