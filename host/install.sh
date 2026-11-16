@@ -135,7 +135,7 @@ if [ -n "$PUBKEY" ]; then
 Dernière étape : autorise cette machine sur le serveur. Depuis un compte
 administrateur du serveur :
 
-  sudo -u memex memex server device add $DEVICE_NAME "$PUBKEY"
+  sudo memex server device add $DEVICE_NAME "$PUBKEY"
 
 Puis, ici :  memex doctor && memex sync
 EOF

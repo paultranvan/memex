@@ -173,7 +173,7 @@ Il reste à faire, une seule fois :
   1. Connecter l'agent sous le compte $MEMEX_USER (voir docs/RUNBOOK.md, « Agent ») :
        sudo -iu $MEMEX_USER    puis    hermes setup   (ou claude / codex)
   2. Autoriser chaque machine de travail avec la clé que son installeur affiche :
-       sudo -u $MEMEX_USER memex server device add NOM "ssh-ed25519 AAAA…"
+       sudo memex server device add NOM "ssh-ed25519 AAAA…"
   3. Facultatif : notifications (MEMEX_NOTIFY_CMD), vault LiveSync (server/livesync/README.md).
 
 Vérifier :  sudo -u $MEMEX_USER memex server status

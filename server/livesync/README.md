@@ -4,7 +4,7 @@ memex écrit le wiki dans un dossier ordinaire, `MEMEX_VAULT_DIR`. Pour que ce d
 dans Obsidian sur tes appareils, un client LiveSync en ligne de commande le synchronise avec ta
 base CouchDB, comme le ferait le plugin.
 
-> **Non testé de mon côté.** Je n'ai eu accès ni à ton serveur ni à ta base CouchDB. Les commandes
+> **Non testé.** Cette notice a été écrite sans accès au serveur ni à la base CouchDB. Les commandes
 > ci-dessous viennent de la documentation officielle du client
 > ([`src/apps/cli/README.md`](https://github.com/vrtmrz/obsidian-livesync/blob/main/src/apps/cli/README.md)),
 > lue le 2026-11-16. Vérifie-les sur ta version avant de t'y fier.
