@@ -1,181 +1,185 @@
-# memex — guide d'exploitation
+# memex — runbook
 
-Tout ce qu'il faut pour installer, brancher, exploiter et reconstruire. Les raisons des choix sont
-dans [ARCHITECTURE.md](ARCHITECTURE.md).
+Everything you need to install, connect, operate and rebuild. The reasons behind the choices are
+in [ARCHITECTURE.md](ARCHITECTURE.md).
 
-- [Essayer sans serveur](#essayer-sans-serveur)
-- [Installer le serveur](#installer-le-serveur)
-- [Brancher une machine de travail](#brancher-une-machine-de-travail)
-- [Au quotidien](#au-quotidien)
-- [Répondre au vérificateur](#répondre-au-vérificateur)
-- [Régler le comportement](#régler-le-comportement)
-- [Reconstruire](#reconstruire)
-- [Dépannage](#dépannage)
-- [Mettre à jour, désinstaller](#mettre-à-jour-désinstaller)
+- [Trying it without a server](#trying-it-without-a-server)
+- [Installing the server](#installing-the-server)
+- [Connecting a work machine](#connecting-a-work-machine)
+- [Day to day](#day-to-day)
+- [Answering the curator](#answering-the-curator)
+- [Tuning the behaviour](#tuning-the-behaviour)
+- [Rebuilding](#rebuilding)
+- [Troubleshooting](#troubleshooting)
+- [Updating, uninstalling](#updating-uninstalling)
 
-## Essayer sans serveur
+## Trying it without a server
 
-Tout peut tourner sur une seule machine, sans root : le « serveur » est alors un dossier local.
+Everything can run on a single machine, without root: the "server" is then a local folder.
 
 ```bash
-server/install.sh --user-mode --agent claude        # ou hermes, codex
+server/install.sh --user-mode --agent claude        # or hermes, codex
 host/install.sh --server local --server-home ~/.local/share/memex-server
-memex sync            # balaye tes sessions et les dépose
-memex server run      # l'archiviste les intègre
+memex sync            # sweeps your sessions and drops them off
+memex server run      # the archivist integrates them
 memex server status
 ```
 
-Le wiki est dans `~/.local/share/memex-server/wiki`, et sa copie de lecture dans
-`~/.local/share/memex/wiki`. Pour ne pas reprendre tout ton historique d'un coup, ajoute
-`--no-backfill` à `host/install.sh`.
+The wiki is in `~/.local/share/memex-server/wiki`, and its read-only copy in
+`~/.local/share/memex/wiki`. To avoid backfilling your whole history in one go, add
+`--no-backfill` to `host/install.sh`.
 
-## Installer le serveur
+## Installing the server
 
-Prérequis sur le serveur : Linux avec systemd, Python 3.9 ou plus, git, un accès root par SSH.
-Recommandé : `bubblewrap` (`apt install bubblewrap`), pour le bac à sable des agents.
+Requirements on the server: Linux with systemd, Python 3.9 or later, git, root access over SSH.
+Recommended: `bubblewrap` (`apt install bubblewrap`), for the agents' sandbox.
 
-### 1. Déployer
+### 1. Deploy
 
-Depuis une machine où ce dépôt est cloné :
+From a machine where this repository is cloned:
 
 ```bash
-server/deploy.sh root@mon-vps --agent hermes --vault /srv/memex/vault --deny /var/www
+server/deploy.sh root@my-server --agent hermes --vault /srv/memex/vault --deny /var/www
 ```
 
-- `--deny` rend un dossier invisible aux agents. Répète-le pour chaque service du serveur que
-  memex n'a pas à voir.
-- `--vault` peut être omis si tu ne veux pas de vault Obsidian sur le serveur.
-- La commande est rejouable : c'est aussi celle des mises à jour.
+- `--deny` makes a folder invisible to the agents. Repeat it for every service on the server that
+  memex has no business seeing.
+- `--vault` can be left out if you do not want an Obsidian vault on the server.
+- `--lang en|fr` sets the language of a **new** wiki (`en` by default; it is written to the
+  configuration as `MEMEX_LANG`). The wiki records its language when it is created, in
+  `.memex/wiki.json`: changing the variable afterwards does not change the language of an existing
+  wiki.
+- The command can be re-run: it is also the one used for updates.
 
-Elle crée le compte `memex` (sans mot de passe ni sudo), installe le programme dans `/opt/memex`,
-écrit `/etc/memex/memex.env`, crée le dépôt du wiki et active trois minuteries.
+It creates the `memex` account (no password, no sudo), installs the program in `/opt/memex`,
+writes `/etc/memex/memex.env`, creates the wiki repository and enables three timers.
 
-### 2. Connecter l'agent
+### 2. Connect the agent
 
-Le pipeline lance l'agent sous le compte `memex`. Il faut donc l'y installer et l'y connecter, une
-fois.
+The pipeline runs the agent under the `memex` account. The agent therefore has to be installed
+and signed in there, once.
 
-**Hermes** (défaut) :
+**Hermes** (default):
 
 ```bash
 sudo -iu memex
 curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
-hermes setup                 # choisir le fournisseur et se connecter
-hermes -z "Réponds OK"       # doit répondre sans rien demander
+hermes setup                 # choose the provider and sign in
+hermes -z "Reply OK"         # must answer without asking anything
 ```
 
-**Claude Code** ou **Codex** : installe-le sous ce compte, connecte-le (`claude` puis `/login`, ou
-`claude setup-token` ; `codex login`), et mets `MEMEX_AGENT=claude` ou `codex` dans
+**Claude Code** or **Codex**: install it under that account, sign it in (`claude` then `/login`, or
+`claude setup-token`; `codex login`), and set `MEMEX_AGENT=claude` or `codex` in
 `/etc/memex/memex.env`.
 
-Vérifie ensuite :
+Then check:
 
 ```bash
-sudo -u memex memex server status     # la ligne « bac_a_sable » doit dire « actif »
+sudo -u memex memex server status     # the `sandbox` line must report it as active
 sudo systemctl start memex-run.service && journalctl -u memex-run.service -n 20
 ```
 
-Si le bac à sable est indiqué « indisponible », le pipeline tourne quand même, protégé par le
-cloisonnement de l'unité systemd. Pour l'exiger : `MEMEX_SANDBOX=bwrap`.
+If the sandbox is reported as unavailable, the pipeline runs all the same, protected by the
+hardening of the systemd unit. To require it: `MEMEX_SANDBOX=bwrap`.
 
-### 3. Messagerie et notifications (facultatif)
+### 3. Messaging and notifications (optional)
 
 ```bash
 sudo -iu memex
-hermes gateway setup         # connecter Telegram, Signal, Discord…
-hermes gateway install       # passerelle en service, démarrée avec le serveur
-hermes send --to telegram "essai"
+hermes gateway setup         # connect Telegram, Signal, Discord…
+hermes gateway install       # gateway as a service, started with the server
+hermes send --to telegram "test"
 ```
 
-N'autorise que ton propre compte sur chaque messagerie. Puis, dans `/etc/memex/memex.env` :
+Allow only your own account on each messaging service. Then, in `/etc/memex/memex.env`:
 
 ```
 MEMEX_NOTIFY_CMD='hermes send --to telegram --subject "$MEMEX_SUBJECT" --file -'
 ```
 
-Le skill `memex` est déjà installé pour Hermes : tu peux lui écrire « où en est la revue ? »,
-« ok sauf la 2 », « note que… », « restaure la page … ».
+The `memex` skill is already installed for Hermes: you can write to it "where is the review at?",
+"ok except 2", "note that…", "restore the page …".
 
-### 4. Vault Obsidian et réseau privé (facultatif)
+### 4. Obsidian vault and private network (optional)
 
-- [Vault synchronisé par LiveSync](../server/livesync/README.md)
-- [Réseau privé avec Tailscale](../server/tailscale/README.md)
+- [Vault synchronised by LiveSync](../server/livesync/README.md)
+- [Private network with Tailscale](../server/tailscale/README.md)
 
-## Brancher une machine de travail
+## Connecting a work machine
 
-Sur chaque machine où tu utilises Claude Code ou Codex :
-
-```bash
-git clone <ce dépôt> memex && cd memex
-host/install.sh --server memex@mon-vps --exclude-remotes '*mon-employeur*'
-```
-
-L'installeur :
-
-1. installe la commande `memex` dans `~/.local/bin` ;
-2. écrit `~/.config/memex/memex.env` ;
-3. crée une clé SSH dédiée, `~/.ssh/memex_ed25519` ;
-4. branche Claude Code (hooks de début et de fin de session, pointeur dans `CLAUDE.md`, droit de
-   lecture sur le wiki) et Codex (hook de début de session, pointeur dans `AGENTS.md`) ;
-5. active une minuterie de synchronisation toutes les dix minutes.
-
-Il affiche pour finir la commande à lancer **sur le serveur** pour autoriser cette machine :
+On each machine where you use Claude Code or Codex:
 
 ```bash
-sudo memex server device add portable "ssh-ed25519 AAAA… memex@portable"
+git clone <this repository> memex && cd memex
+host/install.sh --server memex@my-server --exclude-remotes '*my-employer*'
 ```
 
-Puis, sur la machine : `memex doctor && memex sync`.
+The installer:
 
-Options utiles :
+1. installs the `memex` command in `~/.local/bin`;
+2. writes `~/.config/memex/memex.env`;
+3. creates a dedicated SSH key, `~/.ssh/memex_ed25519`;
+4. hooks into Claude Code (session start and session end hooks, pointer in `CLAUDE.md`, read
+   permission on the wiki) and Codex (session start hook, pointer in `AGENTS.md`);
+5. enables a synchronisation timer, every ten minutes.
 
-| Option | Effet |
-|---|---|
-| `--no-backfill` | Ne reprend pas l'historique : seules les sessions à venir sont capturées |
-| `--exclude-paths ~/Work` | Ne capture jamais ces répertoires |
-| `--exclude-remotes '*entreprise*'` | Ne capture jamais ces dépôts |
-| `--sources claude-code,codex,hermes` | Ajoute Hermes si tu l'utilises sur cette machine |
-| `--device NOM` | Nom de la machine dans le wiki (défaut : son nom d'hôte) |
+It ends by printing the command to run **on the server** to authorise this machine:
 
-Au prochain lancement, Codex demandera d'approuver le nouveau hook : c'est attendu.
-
-## Au quotidien
-
-Rien à faire : la capture, l'archivage et la mise à jour du wiki sont automatiques.
-
-| Besoin | Commande |
-|---|---|
-| Consigner quelque chose tout de suite | `memex note "Décision : … parce que …"` |
-| Forcer une synchronisation | `memex sync` |
-| Voir l'état de la machine | `memex status`, `memex doctor` |
-| Exclure une session | écrire `#memex-off` dedans |
-| Exclure un projet | créer un fichier vide `.memex-ignore` à sa racine |
-| Importer un export ChatGPT ou claude.ai | `memex import chatgpt export.zip --since 2026-01-01 --dry-run` |
-
-Sur le serveur (sous le compte `memex`, ou avec `sudo -u memex`) :
-
-| Besoin | Commande |
-|---|---|
-| État général | `memex server status` |
-| Lancer un passage | `memex server run` |
-| Contrôle sans modèle | `memex server lint` |
-| Lancer le tisseur, le vérificateur | `memex server tisseur --force`, `memex server verif --force` |
-| Rétablir une page supprimée | `memex server restore "Sujets/X/Page.md"` |
-| Sauvegarder maintenant | `memex server backup` |
-| Lister, retirer une machine | `sudo memex server device list`, `sudo memex server device remove NOM` |
-
-## Répondre au vérificateur
-
-Chaque semaine, s'il a quelque chose à proposer, tu reçois une liste numérotée :
-
-```
-1. [fusion] Fusionner Courtiers.md dans PEA.md
-   Pourquoi : les deux comparent les mêmes courtiers.
-2. [condensation] Condenser Solitaire.md
-? À trancher : le déploiement d'Atlas est-il manuel ou scripté ?
+```bash
+sudo memex server device add laptop "ssh-ed25519 AAAA… memex@laptop"
 ```
 
-Réponds à Hermes « ok », « ok sauf la 2 », « seulement la 1 » ou « non ». Ou en ligne de commande :
+Then, on the machine: `memex doctor && memex sync`.
+
+Useful options:
+
+| Option | Effect |
+|---|---|
+| `--no-backfill` | Does not backfill the history: only the sessions to come are captured |
+| `--exclude-paths ~/Work` | Never captures these directories |
+| `--exclude-remotes '*company*'` | Never captures these repositories |
+| `--sources claude-code,codex,hermes` | Adds Hermes if you use it on this machine |
+| `--device NAME` | Name of the machine in the wiki (default: its hostname) |
+
+The next time it starts, Codex will ask you to approve the new hook: this is expected.
+
+## Day to day
+
+Nothing to do: capture, archiving and the update of the wiki are automatic.
+
+| Need | Command |
+|---|---|
+| Record something right away | `memex note "Decision: … because …"` |
+| Force a synchronisation | `memex sync` |
+| See the state of the machine | `memex status`, `memex doctor` |
+| Exclude a session | write `#memex-off` in it |
+| Exclude a project | create an empty `.memex-ignore` file at its root |
+| Import a ChatGPT or claude.ai export | `memex import chatgpt export.zip --since 2026-01-01 --dry-run` |
+
+On the server (under the `memex` account, or with `sudo -u memex`):
+
+| Need | Command |
+|---|---|
+| Overall state | `memex server status` |
+| Start a run | `memex server run` |
+| Check without a model | `memex server lint` |
+| Run the weaver, the curator | `memex server weave --force`, `memex server curate --force` |
+| Restore a deleted page | `memex server restore "Topics/X/Page.md"` |
+| Back up now | `memex server backup` |
+| List, remove a machine | `sudo memex server device list`, `sudo memex server device remove NAME` |
+
+## Answering the curator
+
+Every week, if it has something to propose, you receive a numbered list:
+
+```
+1. [merge] Merge Brokers.md into Savings plan.md
+   Why: both compare the same brokers.
+2. [condense] Condense Solitaire.md
+? To decide: is the deployment of Atlas manual or scripted?
+```
+
+Reply to Hermes "ok", "ok except 2", "only 1" or "no". Or on the command line:
 
 ```bash
 memex server review show
@@ -183,104 +187,107 @@ memex server review approve --except 2
 memex server review reject
 ```
 
-Rien ne change avant ta réponse. Une action refusée n'est plus reproposée. Sans réponse, la revue
-expire au bout de dix jours et le vérificateur repart de zéro.
+Nothing changes before you answer. A rejected action is not proposed again. Without an answer, the
+review expires after ten days and the curator starts again from scratch.
 
-## Régler le comportement
+## Tuning the behaviour
 
-| Ce que tu veux changer | Où |
+| What you want to change | Where |
 |---|---|
-| La structure et le ton du wiki | `AGENTS.md` à la racine du wiki, modifiable depuis Obsidian |
-| Ce que l'archiviste retient | `MEMEX_PROMPTS_DIR` : copie `src/memex/prompts/` et adapte `extract.md` |
-| Le seuil des sessions ignorées | `MEMEX_MIN_USER_CHARS` |
-| La sensibilité du tisseur | `MEMEX_TISSEUR_MIN_PAGES`, `MEMEX_TISSEUR_MIN_DOSSIERS`, `MEMEX_TISSEUR=0` |
-| Le nombre d'actions par revue | `MEMEX_VERIF_MAX_ACTIONS` |
-| Le jour du vérificateur | `server/install.sh --verif "Sun *-*-* 05:00:00"` |
-| Le modèle | `MEMEX_AGENT_MODEL` |
-| Le harnais | `MEMEX_AGENT`, ou `MEMEX_AGENT_EXTRACT_CMD` / `_READ_CMD` / `_EDIT_CMD` |
-| Le bruit des notifications | `MEMEX_NOTIFY_LEVEL` : `never`, `failures`, `changes`, `always` |
+| The structure and the tone of the wiki | `AGENTS.md` at the root of the wiki, editable from Obsidian |
+| What the archivist retains | `MEMEX_PROMPTS_DIR`: copy `src/memex/prompts/<lang>/` and adapt `extract.md` |
+| The threshold below which sessions are ignored | `MEMEX_MIN_USER_CHARS` |
+| The sensitivity of the weaver | `MEMEX_WEAVER_MIN_PAGES`, `MEMEX_WEAVER_MIN_FOLDERS`, `MEMEX_WEAVER=0` |
+| The number of actions per review | `MEMEX_CURATOR_MAX_ACTIONS` |
+| The curator's day | `server/install.sh --curate "Sun *-*-* 05:00:00"` |
+| The model | `MEMEX_AGENT_MODEL` |
+| The harness | `MEMEX_AGENT`, or `MEMEX_AGENT_EXTRACT_CMD` / `_READ_CMD` / `_EDIT_CMD` |
+| How noisy the notifications are | `MEMEX_NOTIFY_LEVEL`: `never`, `failures`, `changes`, `always` |
 
-Toutes les variables sont décrites dans [`config/memex.env.example`](../config/memex.env.example).
+Every variable is described in [`config/memex.env.example`](../config/memex.env.example).
 
-## Reconstruire
+## Rebuilding
 
-### Une nouvelle machine de travail
+### A new work machine
 
-Voir [Brancher une machine de travail](#brancher-une-machine-de-travail). Rien d'autre.
+See [Connecting a work machine](#connecting-a-work-machine). Nothing else.
 
-### Un nouveau serveur, avec une sauvegarde
+### A new server, with a backup
 
-Les sauvegardes sont dans `/srv/memex/backups` sur le serveur, et rapatriées chaque jour dans
-`~/.local/share/memex/backups` sur chaque hôte.
+The backups are in `/srv/memex/backups` on the server, and pulled every day into
+`~/.local/share/memex/backups` on each host.
 
 ```bash
-server/deploy.sh root@nouveau-vps --agent hermes
-scp ~/.local/share/memex/backups/memex-AAAAMMJJ.tar.gz root@nouveau-vps:/tmp/
-ssh root@nouveau-vps 'sudo -u memex memex server restore-backup /tmp/memex-AAAAMMJJ.tar.gz --force'
+server/deploy.sh root@new-server --agent hermes
+scp ~/.local/share/memex/backups/memex-YYYYMMDDTHHMMSSZ.tar.gz root@new-server:/tmp/
+ssh root@new-server 'sudo -u memex memex server restore-backup /tmp/memex-YYYYMMDDTHHMMSSZ.tar.gz --force'
 ```
 
-Puis reconnecte l'agent, ré-autorise chaque machine (`sudo memex server device add …`) et, sur
-chaque hôte, mets `MEMEX_SERVER_SSH` à jour si l'adresse a changé.
+Then sign the agent in again, re-authorise each machine (`sudo memex server device add …`) and, on
+each host, update `MEMEX_SERVER_SSH` if the address has changed.
 
-### Un nouveau serveur, sans sauvegarde
+### A new server, without a backup
 
-Chaque hôte garde ses condensés envoyés. Le wiki se reconstruit en les rejouant :
+Each host keeps the segments it has sent. The wiki is rebuilt by replaying them:
 
 ```bash
-server/deploy.sh root@nouveau-vps --agent hermes     # puis agent et clés, comme ci-dessus
-# sur chaque hôte :
+server/deploy.sh root@new-server --agent hermes     # then the agent and the keys, as above
+# on each host:
 memex resend && memex ship
 ```
 
-Le résultat n'est pas identique au wiki perdu (il est réécrit par le modèle), et tes modifications
-faites à la main dans Obsidian ne reviennent pas. Si un hôte a encore sa copie du wiki, tu peux
-aussi repartir d'elle : c'est un dépôt git complet, dans `~/.local/share/memex/wiki`.
+The new server starts with an empty wiki, created in English unless you say otherwise: if the lost
+wiki was in French, add `--lang fr` to the `server/deploy.sh` command.
 
-### Changer de machine de travail
+The result is not identical to the lost wiki (it is rewritten by the model), and the edits you
+made by hand in Obsidian do not come back. If a host still has its copy of the wiki, you can also
+start again from that: it is a complete git repository, in `~/.local/share/memex/wiki`.
 
-Avant d'abandonner une machine, lance `memex sync`. Ses condensés sont déjà sur le serveur ;
-`~/.local/share/memex/sent` n'en est que la copie.
+### Changing work machine
 
-## Dépannage
+Before you give up a machine, run `memex sync`. Its segments are already on the server;
+`~/.local/share/memex/sent` is only the copy of them.
 
-| Symptôme | À regarder |
+## Troubleshooting
+
+| Symptom | Where to look |
 |---|---|
-| Rien n'arrive dans le wiki | `memex status` sur l'hôte : des condensés « en attente » ? Puis `memex doctor` |
-| `memex doctor` : serveur injoignable | La clé est-elle autorisée ? `ssh -i ~/.ssh/memex_ed25519 memex@mon-vps memex-gate ping` |
-| Les condensés arrivent, pas les pages | Sur le serveur : `memex server status`, puis `journalctl -u memex-run.service -n 50` |
-| Un condensé est en quarantaine | `logs/agent/` pour la raison ; pour réessayer, remets le fichier de `raw/quarantine/<appareil>/` dans `raw/inbox/<appareil>/` |
-| L'agent ne répond pas | `memex server status` affiche `agent_indisponible` avec la date et l'erreur. Rien n'est perdu : la file attend et chaque passage réessaie. Si la connexion a expiré : `sudo -iu memex` puis `hermes -z "OK"` |
-| Une page a été abîmée | `git -C /srv/memex/wiki log -- "Chemin/Page.md"`, puis `memex server restore "Chemin/Page.md" --rev <commit>` |
-| Le hook ne s'affiche pas | `memex hook session-start < /dev/null` dans le dossier du projet |
-| Le wiki local est en retard | `memex pull` |
+| Nothing arrives in the wiki | `memex status` on the host: are there segments pending? Then `memex doctor` |
+| `memex doctor`: server unreachable | Is the key authorised? `ssh -i ~/.ssh/memex_ed25519 memex@my-server memex-gate ping` |
+| The segments arrive, the pages do not | On the server: `memex server status`, then `journalctl -u memex-run.service -n 50` |
+| A segment is in quarantine | `logs/agent/` for the reason; to try again, move the file from `raw/quarantine/<device>/` back to `raw/inbox/<device>/` |
+| The agent does not answer | `memex server status` shows `agent_unavailable` with the date and the error. Nothing is lost: the queue waits and every run tries again. If the sign-in has expired: `sudo -iu memex` then `hermes -z "OK"` |
+| A page has been damaged | `git -C /srv/memex/wiki log -- "Path/Page.md"`, then `memex server restore "Path/Page.md" --rev <commit>` |
+| The hook shows nothing | `memex hook session-start < /dev/null` in the project folder |
+| The local wiki is behind | `memex pull` |
 
-Où sont les journaux :
+Where the logs are:
 
-- hôte : `systemctl --user status memex-sync.timer`, `journalctl --user -u memex-sync.service` ;
-- serveur : `journalctl -u memex-run.service`, et dans `/srv/memex/logs/` : `agent/` (une trace par
-  appel, avec l'invite et la réponse) et `notifications.log`.
+- host: `systemctl --user status memex-sync.timer`, `journalctl --user -u memex-sync.service`;
+- server: `journalctl -u memex-run.service`, and in `/srv/memex/logs/`: `agent/` (one trace per
+  call, with the prompt and the reply) and `notifications.log`.
 
-## Mettre à jour, désinstaller
+## Updating, uninstalling
 
 ```bash
 git pull
-server/deploy.sh root@mon-vps      # serveur
-host/install.sh                    # chaque machine de travail
+server/deploy.sh root@my-server    # server
+host/install.sh                    # each work machine
 ```
 
-Les installeurs ne touchent pas à une configuration existante.
+The installers do not touch an existing configuration.
 
 ```bash
-host/uninstall.sh                  # retire hooks, pointeurs, minuterie et programme
-host/uninstall.sh --purge          # … et les données locales
+host/uninstall.sh                  # removes hooks, pointers, timer and program
+host/uninstall.sh --purge          # … and the local data
 ```
 
-Sur le serveur :
+On the server:
 
 ```bash
-sudo server/uninstall.sh           # retire minuteries, unités et programme ; garde le wiki
-sudo server/uninstall.sh --purge   # … et supprime wiki, condensés, sauvegardes et configuration
-server/uninstall.sh --user-mode    # pour une installation faite sans root
+sudo server/uninstall.sh           # removes timers, units and program; keeps the wiki
+sudo server/uninstall.sh --purge   # … and deletes wiki, segments, backups and configuration
+server/uninstall.sh --user-mode    # for an installation done without root
 ```
 
-Le compte `memex` et le dossier du vault ne sont jamais supprimés par le script.
+The `memex` account and the vault folder are never deleted by the script.

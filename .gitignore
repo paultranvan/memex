@@ -4,6 +4,6 @@ __pycache__/
 /build/
 /dist/
 *.egg-info/
-# configuration locale : ne jamais versionner (adresses, noms de machines)
+# local configuration: never commit it (addresses, machine names)
 /memex.env
 /config/memex.env

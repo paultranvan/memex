@@ -1,14 +1,15 @@
-"""Lancement d'un agent (Hermes, Claude Code, Codex ou autre) pour une étape du pipeline.
+"""Runs an agent (Hermes, Claude Code, Codex or another) for one step of the pipeline.
 
-Le pipeline ne dépend d'aucun harnais : il écrit une invite dans un fichier et
-lance une commande shell. Trois niveaux de droits :
+The pipeline does not depend on any harness: it writes a prompt to a file and
+runs a shell command. Three permission levels:
 
-  - extract : aucun outil, texte en entrée, JSON en sortie ;
-  - read    : lecture des fichiers du répertoire de travail ;
-  - edit    : lecture et écriture dans le répertoire de travail.
+  - extract: no tools, text in, JSON out;
+  - read:    read the files of the working directory;
+  - edit:    read and write in the working directory.
 
-Variables passées à la commande : MEMEX_PROMPT_FILE, MEMEX_OUT_FILE (réponse
-finale, si le harnais sait l'écrire), MEMEX_MODEL.
+Variables passed to the command: MEMEX_PROMPT_FILE, MEMEX_OUT_FILE (the final
+reply, if the harness can write it), MEMEX_MODEL, MEMEX_ROLE (extract,
+integrate, weave, diagnose, apply or probe) and MEMEX_LANG (the wiki language).
 """
 from __future__ import annotations
 
@@ -24,20 +25,23 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-from . import PIPELINE_SENTINEL
+from . import PIPELINE_SENTINEL, i18n
 from .config import Config
 from .util import now
 
 _MODEL = '${MEMEX_MODEL:+--model "$MEMEX_MODEL"}'
 _CODEX = 'codex exec --skip-git-repo-check --ephemeral -o "$MEMEX_OUT_FILE" ${MEMEX_MODEL:+-m "$MEMEX_MODEL"}'
-# Hermes ancre ses outils de fichiers sur TERMINAL_CWD, pas sur le répertoire du processus.
+# Hermes anchors its file tools on TERMINAL_CWD, not on the process's working directory.
 _HERMES = 'TERMINAL_CWD="$PWD" hermes --ignore-rules ${MEMEX_MODEL:+-m "$MEMEX_MODEL"}'
 
 PRESETS: dict[str, dict[str, str]] = {
     "claude": {
         "extract": f'claude -p --tools "" --no-session-persistence {_MODEL} < "$MEMEX_PROMPT_FILE"',
         "read": f'claude -p --tools "Read,Glob,Grep" --no-session-persistence {_MODEL} < "$MEMEX_PROMPT_FILE"',
-        "edit": f'claude -p --tools "Read,Write,Edit,Glob,Grep" --permission-mode acceptEdits --no-session-persistence {_MODEL} < "$MEMEX_PROMPT_FILE"',
+        "edit": (
+            'claude -p --tools "Read,Write,Edit,Glob,Grep" --permission-mode acceptEdits --no-session-persistence '
+            f'{_MODEL} < "$MEMEX_PROMPT_FILE"'
+        ),
     },
     "codex": {
         "extract": f'{_CODEX} --sandbox read-only - < "$MEMEX_PROMPT_FILE" > /dev/null',
@@ -50,10 +54,10 @@ PRESETS: dict[str, dict[str, str]] = {
         "edit": f'{_HERMES} -t file --yolo -z "$(cat "$MEMEX_PROMPT_FILE")"',
     },
 }
-# Les harnais qui reçoivent l'invite en argument sont limités par le noyau (128 Ko par argument).
+# Harnesses that take the prompt as an argument are limited by the kernel (128 KB per argument).
 ARGV_PRESETS = {"hermes"}
 ARGV_LIMIT = 120_000
-# Mot attendu en réponse à la sonde : prouve que l'agent répond encore.
+# Word expected in reply to the probe: it proves that the agent still answers.
 PROBE_TOKEN = "memex-ok"
 
 
@@ -81,17 +85,17 @@ class Agent:
             return override
         if self.name not in PRESETS:
             raise AgentError(
-                f"MEMEX_AGENT={self.name!r} inconnu : choisis hermes, claude ou codex, "
-                f"ou définis MEMEX_AGENT_{kind.upper()}_CMD"
+                f"unknown MEMEX_AGENT={self.name!r}: choose hermes, claude or codex, "
+                f"or set MEMEX_AGENT_{kind.upper()}_CMD"
             )
         return PRESETS[self.name][kind]
 
-    # ── bac à sable ───────────────────────────────────────────────────────
+    # ── sandbox ───────────────────────────────────────────────────────────
     def sandbox(self, kind: str, cwd: Path, tmp: Path) -> list[str]:
-        """Préfixe bubblewrap : tout le système en lecture seule, sauf le dossier de
-        travail (pour `edit`) et l'état propre du harnais. Les clés SSH sont masquées.
+        """bubblewrap prefix: the whole system read-only, except the working directory
+        (for `edit`) and the harness's own state. SSH keys are hidden.
 
-        MEMEX_SANDBOX : `auto` (défaut, utilisé s'il fonctionne), `bwrap` (exigé), `none`.
+        MEMEX_SANDBOX: `auto` (default, used if it works), `bwrap` (required), `none`.
         """
         mode = (self.config.get("MEMEX_SANDBOX") or "auto").strip().lower()
         if mode == "none":
@@ -100,11 +104,12 @@ class Agent:
         base = [binary or "bwrap", "--die-with-parent", "--ro-bind", "/", "/", "--dev", "/dev", "--tmpfs", "/tmp"]
         if not binary or not self._sandbox_works(tuple(base)):
             if mode == "bwrap":
-                raise AgentError("MEMEX_SANDBOX=bwrap mais bubblewrap est absent ou inutilisable ici")
+                raise AgentError("MEMEX_SANDBOX=bwrap but bubblewrap is missing or unusable here")
             return []
         home = Path.home()
         writable = self.config.list("MEMEX_SANDBOX_RW") or [
-            ".hermes", ".claude", ".claude.json", ".codex", ".cache", ".config", ".local/state", ".local/share/claude", ".npm",
+            ".hermes", ".claude", ".claude.json", ".codex", ".cache", ".config", ".local/state",
+            ".local/share/claude", ".npm",
         ]
         args = list(base)
         for name in writable:
@@ -133,51 +138,60 @@ class Agent:
     def sandbox_state(self) -> str:
         mode = (self.config.get("MEMEX_SANDBOX") or "auto").strip().lower()
         if mode == "none":
-            return "désactivé (MEMEX_SANDBOX=none)"
+            return "disabled (MEMEX_SANDBOX=none)"
         binary = shutil.which("bwrap")
         if not binary:
-            return "indisponible : bubblewrap n'est pas installé"
+            return "unavailable: bubblewrap is not installed"
         base = (binary, "--die-with-parent", "--ro-bind", "/", "/", "--dev", "/dev", "--tmpfs", "/tmp")
-        return "actif (bubblewrap)" if self._sandbox_works(base) else "indisponible : bubblewrap ne démarre pas dans cet environnement"
+        if self._sandbox_works(base):
+            return "active (bubblewrap)"
+        return "unavailable: bubblewrap does not start in this environment"
 
     def healthy(self, cwd: Path) -> tuple[bool, str]:
-        """Sonde : l'agent répond-il à une demande triviale ?
+        """Probe: does the agent answer a trivial request?
 
-        Sert à distinguer « ce condensé pose problème » de « l'agent ne répond plus du
-        tout » (quota atteint, réseau coupé, connexion expirée). Renvoie (état, raison).
+        Tells "this segment is the problem" apart from "the agent no longer answers
+        at all" (quota reached, network down, login expired). Returns (state, reason).
         """
         try:
-            reply = self.run("extract", f"Réponds uniquement par ce mot, sans rien d'autre : {PROBE_TOKEN}", cwd, "sonde", timeout=min(self.timeout, 180))
+            reply = self.run(
+                "extract", f"Reply with this single word and nothing else: {PROBE_TOKEN}", cwd, "probe",
+                timeout=min(self.timeout, 180), role="probe",
+            )
         except AgentError as exc:
             return False, str(exc)
         if PROBE_TOKEN in reply.text:
             return True, ""
-        return False, "réponse inattendue à la sonde : " + " ".join(reply.text.split())[-200:]
+        return False, "unexpected reply to the probe: " + " ".join(reply.text.split())[-200:]
 
-    def run(self, kind: str, prompt: str, cwd: Path, label: str = "", timeout: Optional[int] = None) -> AgentResult:
+    def run(
+        self, kind: str, prompt: str, cwd: Path, label: str = "", timeout: Optional[int] = None, role: str = "",
+    ) -> AgentResult:
         if not prompt.startswith(PIPELINE_SENTINEL):
             prompt = f"{PIPELINE_SENTINEL}\n{prompt}"
         command = self.command(kind)
         uses_argv = "$(cat" in command
         if uses_argv and len(prompt.encode("utf-8")) > ARGV_LIMIT:
-            raise AgentError("invite trop longue pour ce harnais (réduis MEMEX_MAX_SEGMENT_CHARS)")
+            raise AgentError("prompt too long for this harness (lower MEMEX_MAX_SEGMENT_CHARS)")
         logs = self.config.logs / "agent"
         logs.mkdir(parents=True, exist_ok=True)
         stamp = now().strftime("%Y%m%dT%H%M%S")
         safe = re.sub(r"[^A-Za-z0-9._-]+", "-", label)[:80] or "run"
         log_path = logs / f"{stamp}-{kind}-{safe}.log"
         with tempfile.TemporaryDirectory(prefix="memex-agent-") as tmp:
-            prompt_file, out_file = Path(tmp) / "prompt.md", Path(tmp) / "reponse.txt"
+            prompt_file, out_file = Path(tmp) / "prompt.md", Path(tmp) / "reply.txt"
             prompt_file.write_text(prompt, encoding="utf-8")
             env = dict(os.environ)
             env.update({
                 "MEMEX_PROMPT_FILE": str(prompt_file), "MEMEX_OUT_FILE": str(out_file),
                 "MEMEX_MODEL": self.config.get("MEMEX_AGENT_MODEL"), "MEMEX_PIPELINE": "1",
+                "MEMEX_ROLE": role, "MEMEX_LANG": i18n.current().lang,
             })
             started = time.time()
             proc = subprocess.Popen(
-                [*self.sandbox(kind, Path(cwd), Path(tmp)), "sh", "-c", command], cwd=str(cwd), env=env, stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True,
+                [*self.sandbox(kind, Path(cwd), Path(tmp)), "sh", "-c", command], cwd=str(cwd), env=env,
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                start_new_session=True,
             )
             try:
                 stdout, stderr = proc.communicate(timeout=timeout or self.timeout)
@@ -187,8 +201,8 @@ class Agent:
                 except OSError:
                     proc.kill()
                 stdout, stderr = proc.communicate()
-                self._log(log_path, kind, command, prompt, stdout, stderr, "délai dépassé")
-                raise AgentError(f"l'agent a dépassé {timeout or self.timeout} s ({kind})")
+                self._log(log_path, kind, command, prompt, stdout, stderr, "timed out")
+                raise AgentError(f"the agent exceeded {timeout or self.timeout} s ({kind})")
             seconds = time.time() - started
             text = stdout or ""
             try:
@@ -197,18 +211,18 @@ class Agent:
                     text = produced
             except OSError:
                 pass
-        self._log(log_path, kind, command, prompt, text, stderr, f"code {proc.returncode}, {seconds:.0f} s")
+        self._log(log_path, kind, command, prompt, text, stderr, f"exit {proc.returncode}, {seconds:.0f} s")
         self._rotate(logs)
         if proc.returncode != 0:
             tail = (stderr or text or "").strip()[-400:]
-            raise AgentError(f"l'agent a échoué (code {proc.returncode}) : {tail}")
+            raise AgentError(f"the agent failed (exit {proc.returncode}): {tail}")
         return AgentResult(text=text, returncode=proc.returncode, seconds=seconds, log=log_path)
 
     @staticmethod
     def _log(path: Path, kind: str, command: str, prompt: str, out: str, err: str, status: str) -> None:
         body = (
-            f"# {kind} — {status}\n$ {command}\n\n## invite ({len(prompt)} caractères)\n{prompt[:6000]}\n"
-            f"\n## sortie\n{(out or '')[-6000:]}\n\n## erreurs\n{(err or '')[-3000:]}\n"
+            f"# {kind} — {status}\n$ {command}\n\n## prompt ({len(prompt)} characters)\n{prompt[:6000]}\n"
+            f"\n## output\n{(out or '')[-6000:]}\n\n## errors\n{(err or '')[-3000:]}\n"
         )
         try:
             path.write_text(body, encoding="utf-8")
@@ -223,19 +237,29 @@ class Agent:
 
 
 def parse_json_reply(text: str) -> Any:
-    """Extrait l'objet JSON d'une réponse, même entourée de texte ou de clôtures de code."""
+    """Extracts the JSON object from a reply, even when wrapped in text or code fences."""
     text = (text or "").strip()
     fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.S)
-    candidates = [fenced.group(1)] if fenced else []
-    start, end = text.find("{"), text.rfind("}")
-    if start != -1 and end > start:
-        candidates.append(text[start:end + 1])
-    candidates.append(text)
-    for candidate in candidates:
+    for candidate in ([fenced.group(1)] if fenced else []) + [text]:
         try:
             value = json.loads(candidate)
         except ValueError:
             continue
         if isinstance(value, dict):
             return value
-    raise AgentError("la réponse de l'agent n'est pas un objet JSON")
+    # Objects surrounded by prose. A model that corrects itself leaves several in a row: the last
+    # one is its answer. If any of them is malformed the reply is ambiguous, and failing (hence
+    # retrying) is safer than settling for an earlier draft.
+    decoder, found, position = json.JSONDecoder(), None, text.find("{")
+    while position != -1:
+        try:
+            value, length = decoder.raw_decode(text[position:])
+        except ValueError:
+            found = None
+            break
+        if isinstance(value, dict):
+            found = value
+        position = text.find("{", position + length)
+    if found is not None:
+        return found
+    raise AgentError("the agent's reply is not a JSON object")

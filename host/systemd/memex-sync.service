@@ -1,5 +1,5 @@
 [Unit]
-Description=memex : balayage des sessions et synchronisation avec le serveur
+Description=memex: session sweep and synchronisation with the server
 Documentation=file://%h/.config/memex/memex.env
 
 [Service]

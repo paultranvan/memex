@@ -1,7 +1,7 @@
-"""memex — base de connaissance alimentée par les sessions d'agents."""
+"""memex — a knowledge base fed by agent sessions."""
 
 __version__ = "0.1.0"
 
-# Toute invite envoyée par le pipeline commence par ce marqueur : les adaptateurs
-# ignorent les sessions qui le portent, pour que memex ne s'archive pas lui-même.
+# Every prompt sent by the pipeline starts with this marker: the adapters skip
+# the sessions that carry it, so that memex does not archive itself.
 PIPELINE_SENTINEL = "[memex:pipeline]"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Installe memex sur une machine de travail (Claude Code, Codex).
-# Rejouable sans risque : chaque étape vérifie ce qui est déjà en place.
+# Installs memex on a work machine (Claude Code, Codex).
+# Safe to run again: each step checks what is already in place.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -12,20 +12,20 @@ TIMER=1 INTEGRATE=1 LINK=0 KEY=1 INTERVAL="10min" BACKFILL=1
 
 usage() {
     cat <<'EOF'
-Usage : host/install.sh [options]
+Usage: host/install.sh [options]
 
-  --server UTILISATEUR@HÔTE   adresse SSH du serveur memex (« local » : serveur sur cette machine)
-  --server-home CHEMIN        valeur de MEMEX_HOME sur le serveur (défaut : /srv/memex)
-  --device NOM                nom de cette machine (défaut : son nom d'hôte)
-  --sources LISTE             sources à capturer (défaut : claude-code,codex)
-  --exclude-paths LISTE       répertoires à ne jamais capturer
-  --exclude-remotes LISTE     dépôts git à ne jamais capturer (motifs)
-  --interval DURÉE            fréquence de la synchronisation (défaut : 10min)
-  --no-backfill               ne pas reprendre l'historique : seules les sessions à venir sont capturées
-  --no-timer                  ne pas installer la minuterie
-  --no-integrate              ne pas toucher à la configuration de Claude Code et Codex
-  --no-key                    ne pas créer de clé SSH dédiée
-  --link                      lier le dépôt au lieu de le copier (développement)
+  --server USER@HOST          SSH address of the memex server ("local": the server is on this machine)
+  --server-home PATH          value of MEMEX_HOME on the server (default: /srv/memex)
+  --device NAME               name of this machine (default: its hostname)
+  --sources LIST              sources to capture (default: claude-code,codex)
+  --exclude-paths LIST        directories never to capture
+  --exclude-remotes LIST      git repositories never to capture (patterns)
+  --interval DURATION         how often to synchronise (default: 10min)
+  --no-backfill               skip the backfill: only future sessions are captured
+  --no-timer                  do not install the timer
+  --no-integrate              leave the configuration of Claude Code and Codex untouched
+  --no-key                    do not create a dedicated SSH key
+  --link                      link the repository instead of copying it (development)
 EOF
 }
 
@@ -44,11 +44,11 @@ while [ $# -gt 0 ]; do
         --no-key) KEY=0; shift ;;
         --link) LINK=1; shift ;;
         -h|--help) usage; exit 0 ;;
-        *) usage >&2; die "option inconnue : $1" ;;
+        *) usage >&2; die "unknown option: $1" ;;
     esac
 done
 
-step "Vérifications"
+step "Checks"
 check_python
 need git
 need ssh
@@ -59,22 +59,22 @@ BIN="$HOME/.local/bin/memex"
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/memex"
 CONFIG="$CONFIG_DIR/memex.env"
 
-step "Installation du programme dans $APP"
+step "Installing the program in $APP"
 if [ "$LINK" = "1" ]; then install_app "$REPO/src" "$APP" 1; else install_app "$REPO/src" "$APP"; fi
 write_wrapper "$BIN" "$APP"
 case ":$PATH:" in
     *":$HOME/.local/bin:"*) ;;
-    *) warn "$HOME/.local/bin n'est pas dans ton PATH : ajoute-le pour taper « memex » directement." ;;
+    *) warn "$HOME/.local/bin is not in your PATH: add it to run \"memex\" directly" ;;
 esac
 
-step "Configuration : $CONFIG"
+step "Configuration: $CONFIG"
 mkdir -p "$CONFIG_DIR"
 if [ ! -f "$CONFIG" ]; then
     cp "$REPO/config/memex.env.example" "$CONFIG"
     chmod 600 "$CONFIG"
-    say "  créée à partir du modèle"
+    say "  created from the template"
 else
-    say "  déjà présente : seules les options passées en argument sont modifiées"
+    say "  already present: only the options given on the command line are changed"
 fi
 [ -n "$SERVER" ] && set_kv "$CONFIG" MEMEX_SERVER_SSH "$SERVER"
 [ -n "$SERVER_HOME" ] && set_kv "$CONFIG" MEMEX_SERVER_HOME "$SERVER_HOME"
@@ -86,31 +86,31 @@ fi
 CURRENT_SERVER="$(sed -n 's/^MEMEX_SERVER_SSH=//p' "$CONFIG" | tail -1 | tr -d '"'"'")"
 PUBKEY=""
 if [ "$KEY" = "1" ] && [ -n "$CURRENT_SERVER" ] && [ "$CURRENT_SERVER" != "local" ]; then
-    step "Clé SSH dédiée à memex"
+    step "SSH key dedicated to memex"
     KEYFILE="$HOME/.ssh/memex_ed25519"
     if [ ! -f "$KEYFILE" ]; then
         mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
         ssh-keygen -q -t ed25519 -N "" -C "memex@$(hostname -s 2>/dev/null || hostname)" -f "$KEYFILE"
-        say "  créée : $KEYFILE"
+        say "  created: $KEYFILE"
     else
-        say "  déjà présente : $KEYFILE"
+        say "  already present: $KEYFILE"
     fi
     set_kv "$CONFIG" MEMEX_SSH_OPTS "-i $KEYFILE -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=6"
     PUBKEY="$(cat "$KEYFILE.pub")"
 fi
 
 if [ "$BACKFILL" = "0" ] && [ ! -f "$DATA/state.json" ]; then
-    step "Historique laissé de côté"
+    step "Backfill skipped"
     "$BIN" sweep --skip-existing | sed 's/^/  /'
 fi
 
 if [ "$INTEGRATE" = "1" ]; then
-    step "Branchement sur Claude Code et Codex"
+    step "Integration with Claude Code and Codex"
     "$BIN" integrate install --bin "$BIN" | sed 's/^/  /'
 fi
 
 if [ "$TIMER" = "1" ]; then
-    step "Minuterie de synchronisation (toutes les $INTERVAL)"
+    step "Synchronisation timer (every $INTERVAL)"
     if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
         UNITS="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
         mkdir -p "$UNITS"
@@ -118,25 +118,25 @@ if [ "$TIMER" = "1" ]; then
         render "$REPO/host/systemd/memex-sync.timer" "$UNITS/memex-sync.timer" "INTERVAL=$INTERVAL"
         systemctl --user daemon-reload
         systemctl --user enable --now memex-sync.timer >/dev/null
-        say "  memex-sync.timer activée"
+        say "  memex-sync.timer enabled"
     else
-        warn "systemd (session utilisateur) indisponible. Ajoute cette ligne à ta crontab (crontab -e) :"
+        warn "systemd (user session) is not available. Add this line to your crontab (crontab -e):"
         say "    */10 * * * * $BIN sync --quiet"
     fi
 fi
 
-step "État"
+step "Status"
 "$BIN" doctor || true
 
 if [ -n "$PUBKEY" ]; then
-    DEVICE_NAME="$("$BIN" status | sed -n 's/^appareil *: //p')"
+    DEVICE_NAME="$("$BIN" status | sed -n 's/^device *: *//p')"
     cat <<EOF
 
-Dernière étape : autorise cette machine sur le serveur. Depuis un compte
-administrateur du serveur :
+Last step: authorise this machine on the server. From an administrator
+account on the server:
 
   sudo memex server device add $DEVICE_NAME "$PUBKEY"
 
-Puis, ici :  memex doctor && memex sync
+Then, here:  memex doctor && memex sync
 EOF
 fi

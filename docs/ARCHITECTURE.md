@@ -1,518 +1,561 @@
-# memex — architecture et décisions
+# memex — architecture and decisions
 
-memex transforme mes sessions avec des agents (Claude Code, Codex, Hermes) en un wiki markdown
-structuré, lisible dans Obsidian et consulté par ces mêmes agents. Ce document décrit le système
-tel qu'il est construit dans ce dépôt, puis liste chaque décision avec sa raison et ce qui a été
-écarté.
+memex turns your sessions with coding agents (Claude Code, Codex, Hermes) into a structured
+markdown wiki, readable in Obsidian and consulted by those same agents. This document describes
+the system as it is built in this repository, then lists every decision with its reason and what
+was ruled out.
 
-- [1. Vue d'ensemble](#1-vue-densemble)
-- [2. Le trajet d'une information](#2-le-trajet-dune-information)
-- [3. Côté hôte](#3-côté-hôte)
-- [4. Côté serveur](#4-côté-serveur)
-- [5. Le wiki](#5-le-wiki)
-- [6. Les trois agents](#6-les-trois-agents)
-- [7. Sécurité](#7-sécurité)
-- [8. Reconstruction](#8-reconstruction)
-- [9. Registre des décisions](#9-registre-des-décisions)
-- [10. Ce qui est vérifié, ce qui ne l'est pas](#10-ce-qui-est-vérifié-ce-qui-ne-lest-pas)
-- [11. Limites connues et suites possibles](#11-limites-connues-et-suites-possibles)
+- [1. Overview](#1-overview)
+- [2. The path of a piece of information](#2-the-path-of-a-piece-of-information)
+- [3. Host side](#3-host-side)
+- [4. Server side](#4-server-side)
+- [5. The wiki](#5-the-wiki)
+- [6. The three agents](#6-the-three-agents)
+- [7. Security](#7-security)
+- [8. Rebuilding](#8-rebuilding)
+- [9. Decision register](#9-decision-register)
+- [10. What is verified and what is not](#10-what-is-verified-and-what-is-not)
+- [11. Known limits and possible next steps](#11-known-limits-and-possible-next-steps)
 
-## 1. Vue d'ensemble
+## 1. Overview
 
 ```
- MACHINES DE TRAVAIL (hôtes)                    SERVEUR (VPS, toujours allumé)
+ WORK MACHINES (hosts)                          SERVER (VPS, always on)
 ┌──────────────────────────────┐              ┌──────────────────────────────────────┐
-│ Claude Code, Codex           │              │ porte SSH (memex-gate)               │
-│   │ transcripts locaux       │   condensés  │   │                                  │
+│ Claude Code, Codex           │              │ SSH gate (memex-gate)                │
+│   │ local transcripts        │   segments   │   │                                  │
 │   ▼                          │ ───────────► │   ▼                                  │
-│ balayeur (sans LLM)          │     SSH      │ raw/inbox ──► archiviste ──► tisseur │
-│   masque les secrets         │              │                 │                    │
+│ sweeper (no LLM)             │     SSH      │ raw/inbox ──► archivist ──► weaver   │
+│   redacts secrets            │              │                 │                    │
 │                              │              │                 ▼                    │
-│ copie du wiki (lecture)      │ ◄─────────── │ wiki (dépôt git) ◄── vérificateur    │
-│   ▲            │             │  git fetch   │   │        ▲          (sur accord)   │
+│ wiki copy (read-only)        │ ◄─────────── │ wiki (git repository) ◄── curator    │
+│   ▲            │             │  git fetch   │   │        ▲           (on approval) │
 │   │            ▼             │              │   ▼        │                         │
-│ hook de démarrage : la page  │              │ vault ◄──► LiveSync ◄──► Obsidian    │
-│ du projet entre en contexte  │              │                                      │
-└──────────────────────────────┘              │ Hermes : rédige, notifie, converse   │
+│ session-start hook: project  │              │ vault ◄──► LiveSync ◄──► Obsidian    │
+│ page enters the context      │              │                                      │
+└──────────────────────────────┘              │ Hermes: writes, notifies, converses  │
                                               └──────────────────────────────────────┘
 ```
 
-Deux règles tiennent l'ensemble :
+Two rules hold the whole thing together:
 
-- **Les connexions partent toujours de l'hôte.** Le serveur ne contacte jamais une machine de travail.
-- **Le modèle rédige, le code tient les comptes.** Un agent n'écrit que des pages, dans une copie
-  jetable. L'index, le journal, la provenance, les commits et les contrôles sont déterministes.
+- **Connections always start from the host.** The server never contacts a work machine.
+- **The model writes, the code keeps the books.** An agent writes nothing but pages, in a
+  disposable copy. The index, the journal, provenance, commits and checks are deterministic.
 
-## 2. Le trajet d'une information
+## 2. The path of a piece of information
 
-1. Je travaille avec Claude Code ou Codex. La session s'écrit dans un transcript local.
-2. À la fin de la session (hook `SessionEnd` de Claude Code), ou après dix minutes d'inactivité, le
-   **balayeur** en extrait un **condensé** : mes messages et les réponses finales de l'agent, sans
-   les sorties d'outils, secrets masqués.
-3. Le condensé part au serveur par SSH. Son arrivée réveille le pipeline.
-4. L'**archiviste** en extrait ce qui est durable (décisions, pistes abandonnées, problèmes, faits,
-   préférences, état), puis l'intègre au wiki dans une copie de travail. Le résultat est contrôlé,
-   commité, fusionné.
-5. Le **tisseur** relie les pages touchées et tient les pages transverses.
-6. Le wiki est exporté dans le dossier du vault ; LiveSync le pousse vers mes appareils.
-7. Au prochain démarrage d'une session dans ce projet, le **hook de démarrage** injecte la page du
-   projet dans le contexte de l'agent.
+1. You work with Claude Code or Codex. The session is written to a local transcript.
+2. At the end of the session (Claude Code's `SessionEnd` hook), or after ten minutes of
+   inactivity, the **sweeper** extracts a **segment** from it: your messages and the agent's final
+   answers, without tool output, with secrets redacted.
+3. The segment goes to the server over SSH. Its arrival wakes the pipeline.
+4. The **archivist** extracts what is durable (decisions, dead ends, problems, facts, preferences,
+   state), then integrates it into the wiki in a working copy. The result is checked, committed,
+   merged.
+5. The **weaver** links the pages that were touched and maintains the cross-cutting pages.
+6. The wiki is exported to the vault folder; LiveSync pushes it to your devices.
+7. The next time a session starts in that project, the **session-start hook** injects the
+   project's page into the agent's context.
 
-Entre la fin d'une session et la mise à jour du wiki, il s'écoule quelques minutes.
+A few minutes pass between the end of a session and the update of the wiki.
 
-## 3. Côté hôte
+## 3. Host side
 
-Un seul programme, `memex`, en Python sans dépendance. Installé par `host/install.sh`.
+A single program, `memex`, in Python with no dependencies. Installed by `host/install.sh`.
 
-### Le balayeur
+### The sweeper
 
-| Source | Emplacement lu | Ce qui est gardé |
+| Source | Location read | What is kept |
 |---|---|---|
-| Claude Code | `~/.claude/projects/<projet>/<session>.jsonl` | Paroles humaines (`origin.kind = human`), textes de l'agent |
-| Codex | `~/.codex/sessions/**/rollout-*.jsonl` | Événements `item_completed` : `UserMessage`, `AgentMessage` |
-| Hermes | `~/.hermes/state.db` (SQLite, lecture seule) | Messages `user` et `assistant` |
+| Claude Code | `~/.claude/projects/<project>/<session>.jsonl` | Human turns (`origin.kind = human`), the agent's text |
+| Codex | `~/.codex/sessions/**/rollout-*.jsonl` | `item_completed` events: `UserMessage`, `AgentMessage` |
+| Hermes | `~/.hermes/state.db` (SQLite, read-only) | `user` and `assistant` messages |
 
-- **Incrémental.** Un curseur par session (octets lus, ou dernier message). Un second passage sur
-  tout mon historique prend dix millisecondes.
-- **Segments immuables.** Chaque passage sur une session produit un nouveau fichier, numéroté, qui
-  ne contient que la suite. Un condensé n'est jamais réécrit : il peut donc être envoyé, archivé et
-  rejoué sans ambiguïté.
-- **Ce qui est écarté.** Sorties d'outils, réflexion interne, sous-agents, messages injectés par le
-  harnais (rappels système, résumés de compaction, notifications), et la narration intermédiaire
-  courte (« je regarde le fichier… »). Les réponses finales sont toujours gardées.
-- **Masquage.** Clés d'API, jetons, mots de passe dans une URL ou une affectation, clés privées,
-  IBAN, numéros de carte. Par motifs connus : mieux vaut masquer un peu trop.
-- **Exclusions.** Par chemin, par dépôt distant, par fichier `.memex-ignore`, ou en écrivant
-  `#memex-off` dans une session.
-- **Rattachement au projet.** Par l'adresse distante du dépôt git. Un worktree, même supprimé
-  depuis, retombe sur le même projet.
+- **Incremental.** One cursor per session (bytes read, or last message). Measured on the author's
+  machine: a second sweep over the whole history takes ten milliseconds.
+- **Immutable segments.** Each sweep of a session produces a new, numbered file that contains only
+  what came after the previous one. A segment is never rewritten: it can therefore be sent,
+  archived and replayed without ambiguity.
+- **What is left out.** Tool output, internal reasoning, sub-agents, messages injected by the
+  harness (system reminders, compaction summaries, notifications), and short intermediate
+  narration ("let me look at the file…"). Final answers are always kept.
+- **Redaction.** API keys, tokens, passwords in a URL or an assignment, private keys, IBANs, card
+  numbers. By known patterns: better to redact a little too much.
+- **Exclusions.** By path, by remote repository, by a `.memex-ignore` file, or by writing
+  `#memex-off` in a session.
+- **Attachment to a project.** By the remote URL of the git repository. A worktree, even one that
+  has since been deleted, resolves to the same project.
 
-### La liaison
+### The link
 
-`memex sync` balaye, envoie, puis met à jour la copie locale du wiki. Il est lancé par :
+`memex sync` sweeps, ships, then updates the local copy of the wiki. It is started by:
 
-- le hook `SessionEnd` de Claude Code, pour la session qui vient de finir ;
-- le hook `SessionStart` (Claude Code et Codex), en arrière-plan, sans faire attendre la session ;
-- une minuterie systemd utilisateur, toutes les dix minutes.
+- Claude Code's `SessionEnd` hook, for the session that has just ended;
+- the `SessionStart` hook (Claude Code and Codex), in the background, without making the session
+  wait;
+- a systemd user timer, every ten minutes.
 
-Sans réseau, les condensés attendent dans `outbox/`. Une fois envoyés, ils sont conservés dans
-`sent/` : c'est la sauvegarde qui permet de reconstruire le serveur.
+Without a network, segments wait in `outbox/`. Once sent, they are kept in `sent/`: that is the
+backup from which the server can be rebuilt.
 
-### La lecture par les agents
+### How the agents read the wiki
 
-- **Un pointeur** dans `~/.claude/CLAUDE.md` et `~/.codex/AGENTS.md` : où est le wiki, quand le
-  consulter, ne jamais y écrire.
-- **Une injection au démarrage** : si la session s'ouvre dans un projet connu du wiki, sa page
-  vivante est imprimée par le hook et entre dans le contexte (6 000 caractères au plus).
-- **Une règle de lecture** dans les permissions de Claude Code, pour le dossier du wiki.
+- **A pointer** in `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`: where the wiki is, when to
+  consult it, never to write to it.
+- **An injection at start-up**: if the session opens in a project the wiki knows, its living page
+  is printed by the hook and enters the context (6,000 characters at most).
+- **A read rule** in Claude Code's permissions, for the wiki folder.
 
-Les agents des hôtes ne font que lire. Ce qu'ils apprennent revient par les condensés. Pour
-consigner quelque chose sans attendre : `memex note "…"`.
+The agents on the hosts only read. What they learn comes back through the segments. To record
+something without waiting: `memex note "…"`.
 
-## 4. Côté serveur
+## 4. Server side
 
-Installé par `server/install.sh`, sous un compte système dédié, `memex`, dont le répertoire
-personnel est `MEMEX_HOME` (par défaut `/srv/memex`).
+Installed by `server/install.sh`, under a dedicated system account, `memex`, whose home directory
+is `MEMEX_HOME` (`/srv/memex` by default).
 
 ```
 /srv/memex/
-  raw/inbox/<appareil>/     condensés reçus, à traiter
-  raw/archive/<appareil>/   condensés traités (les sources que citent les pages)
-  raw/quarantine/           condensés en échec répété
-  raw/extracts/             résultat de l'extraction, gardé pour ne pas la refaire
-  wiki/                     dépôt git : la vérité du wiki
-  work/                     copies de travail jetables des agents
-  vault/                    dossier synchronisé par LiveSync (facultatif)
+  raw/inbox/<device>/       segments received, waiting to be processed
+  raw/archive/<device>/     segments processed (the sources the pages cite)
+  raw/quarantine/           segments that failed repeatedly
+  raw/extracts/             result of the extraction, kept so it is not done again
+  wiki/                     git repository: the source of truth for the wiki
+  work/                     the agents' disposable working copies
+  vault/                    folder synchronised by LiveSync (optional)
   state/  logs/  backups/
-/opt/memex/app/             le programme, propriété de root
-/etc/memex/memex.env        la configuration
+/opt/memex/app/             the program, owned by root
+/etc/memex/memex.env        the configuration
 ```
 
-### La porte
+### The gate
 
-Chaque machine a sa clé SSH, enregistrée avec une commande forcée :
+Each machine has its own SSH key, registered with a forced command:
 
 ```
-restrict,command="/usr/local/bin/memex-gate --forced --device portable" ssh-ed25519 AAAA…
+restrict,command="/usr/local/bin/memex-gate --forced --device laptop" ssh-ed25519 AAAA…
 ```
 
-Cette clé ne permet que trois choses : déposer des condensés dans la boîte de **son** appareil,
-cloner le wiki en lecture, récupérer la dernière sauvegarde. Pas de shell, pas d'autre dépôt, pas
-d'écriture dans le wiki. Le nom de l'appareil vient de la clé, jamais de ce que dit le client.
+That key allows only three things: dropping segments into the inbox of **its own** device, cloning
+the wiki read-only, fetching the latest backup. No shell, no other repository, no writing to the
+wiki. The device name comes from the key, never from what the client says.
 
-### Le pipeline
+### The pipeline
 
-`memex server run` est lancé par systemd : à l'arrivée d'un condensé (`memex-run.path`), et toutes
-les quinze minutes par sécurité (`memex-run.timer`). Un verrou garantit un seul rédacteur.
+`memex server run` is started by systemd: when a segment arrives (`memex-run.path`), and every
+fifteen minutes as a safety net (`memex-run.timer`). A lock guarantees a single writer.
 
-Pour chaque condensé, dans l'ordre chronologique :
+For each segment, in chronological order:
 
-1. **Tri sans modèle.** Une session où j'ai écrit moins de 80 caractères ne coûte aucun appel : une
-   ligne au journal.
-2. **Extraction.** Un appel sans outil, qui renvoie du JSON : un résumé et une liste d'éléments
-   typés. Liste vide : une ligne au journal, et c'est tout.
-3. **Intégration.** Un appel avec lecture et écriture de fichiers, dans une copie de travail git
-   créée pour l'occasion. L'agent reçoit les conventions, les éléments, la liste des pages et le
-   dossier où ranger.
-4. **Contrôle.** Le diff est vérifié contre le périmètre du rôle (voir §7). En cas de refus, un
-   second essai reçoit la liste des fautes. Après trois passages en échec, le condensé part en
-   quarantaine et je suis prévenu. Si c'est l'agent lui-même qui ne répond plus (quota atteint,
-   réseau coupé), le passage s'arrête sans compter d'échec : voir D39.
-5. **Comptabilité.** Le code ajoute la source et la date dans l'en-tête des pages touchées, écrit
-   la ligne du journal, le registre des condensés traités, régénère l'index, complète `log.md`.
-6. **Commit et fusion.** Un commit par condensé, fusionné en avance rapide dans `main`.
-7. **Export** vers le vault.
+1. **Triage without a model.** A session in which you wrote fewer than 80 characters costs no
+   call: one line in the journal.
+2. **Extraction.** A call without tools, which returns JSON: a summary and a list of typed items.
+   Empty list: one line in the journal, and that is all.
+3. **Integration.** A call that can read and write files, in a git working copy created for the
+   occasion. The agent receives the conventions, the items, the list of pages and the folder to
+   file them in.
+4. **Check.** The diff is checked against the scope of the role (see §7). If it is rejected, a
+   second attempt receives the list of faults. After three failed runs, the segment goes to
+   quarantine and you are notified. If it is the agent itself that no longer answers (quota
+   reached, network down), the run stops without counting a failure: see D39.
+5. **Bookkeeping.** The code adds the source and the date to the front matter of the pages
+   touched, writes the journal line and the ledger of processed segments, regenerates the index,
+   completes `log.md`.
+6. **Commit and merge.** One commit per segment, fast-forward merged into `main`.
+7. **Export** to the vault.
 
-Puis le tisseur passe, si quelque chose a changé.
+Then the weaver runs, if anything changed.
 
-### Le harnais des agents
+### The agent harness
 
-Le pipeline ne dépend d'aucun harnais : il écrit une invite dans un fichier et lance une commande
-shell. Trois préréglages (`MEMEX_AGENT=hermes|claude|codex`), trois niveaux de droits :
+The pipeline depends on no particular harness: it writes a prompt to a file and runs a shell
+command. Three presets (`MEMEX_AGENT=hermes|claude|codex`), three permission levels:
 
-| Niveau | Sert à | Hermes | Claude Code | Codex |
+| Level | Used for | Hermes | Claude Code | Codex |
 |---|---|---|---|---|
 | `extract` | Extraction | `-t todo -z` | `-p --tools ""` | `exec --sandbox read-only` |
-| `read` | Diagnostic du vérificateur | `-t file -z` | `-p --tools "Read,Glob,Grep"` | `exec --sandbox read-only` |
-| `edit` | Intégration, tisseur, actions | `-t file --yolo -z` | `-p --tools "Read,Write,Edit,Glob,Grep" --permission-mode acceptEdits` | `exec --sandbox workspace-write` |
+| `read` | The curator's diagnosis | `-t file -z` | `-p --tools "Read,Glob,Grep"` | `exec --sandbox read-only` |
+| `edit` | Integration, weaver, actions | `-t file --yolo -z` | `-p --tools "Read,Write,Edit,Glob,Grep" --permission-mode acceptEdits` | `exec --sandbox workspace-write` |
 
-N'importe quelle autre commande convient (`MEMEX_AGENT_*_CMD`).
+Any other command will do (`MEMEX_AGENT_*_CMD`).
 
-### Le vault
+### The vault
 
-`vault/` est un dossier ordinaire, sans rien de git ni de caché. Un manifeste garde l'empreinte de
-chaque fichier au dernier échange, ce qui dit qui a changé quoi :
+`vault/` is an ordinary folder, with nothing from git and nothing hidden in it. A manifest keeps
+the hash of each file at the last exchange, which tells who changed what:
 
-- le vault diffère du manifeste : je l'ai modifié dans Obsidian, c'est importé et commité sous
-  l'auteur « humain » ;
-- le wiki diffère du vault : un agent l'a modifié, c'est exporté ;
-- les deux ont changé : ma version gagne.
+- the vault differs from the manifest: you edited it in Obsidian; the change is imported and
+  committed under the `human` author;
+- the wiki differs from the vault: an agent changed it; the change is exported;
+- both changed: your version wins.
 
-Si le manifeste est perdu, le wiki fait foi : un vieux vault ne peut pas l'écraser.
+If the manifest is lost, the wiki is authoritative: an old vault cannot overwrite it.
 
 ### Hermes
 
-Hermes a trois rôles, tous remplaçables :
+Hermes has three roles, all replaceable:
 
-- **rédacteur** : c'est le harnais par défaut des agents ;
-- **messager** : `MEMEX_NOTIFY_CMD='hermes send --to telegram …'` ;
-- **interlocuteur** : un skill (`server/hermes/skills/memex`) lui apprend à répondre aux revues
-  (« ok sauf la 2 »), à lire le wiki, à restaurer une page, à consigner une note.
+- **writer**: it is the default harness for the agents;
+- **messenger**: `MEMEX_NOTIFY_CMD='hermes send --to telegram …'`;
+- **interlocutor**: a skill (`server/hermes/skills/memex`) teaches it to answer reviews
+  ("ok except 2"), to read the wiki, to restore a page, to record a note.
 
-Ses propres discussions (messagerie) sont capturées sur le serveur comme n'importe quelle session.
+Its own conversations (messaging) are captured on the server like any other session.
 
-## 5. Le wiki
+## 5. The wiki
 
 ```
-Projets/<Nom>/<Nom>.md                    page vivante d'un projet de code
-Projets/<Nom>/Décisions/<date> <titre>.md fiches de décision
-Sujets/<Nom>/<Nom>.md                     page vivante d'un sujet hors code
-Concepts/<Nom>.md                         pages transverses, tenues par le tisseur
-Journal/<année>/<date>.md                 une ligne par session        (code)
-index.md   log.md                         catalogue, journal des opérations (code)
-AGENTS.md                                 les conventions (moi seul)
-.memex/                                   registre, correspondance projet → dossier, refus
+Projects/<Name>/<Name>.md                     living page of a code project
+Projects/<Name>/Decisions/<date> <title>.md   decision records
+Topics/<Name>/<Name>.md                       living page of a topic outside code
+Concepts/<Name>.md                            cross-cutting pages, kept by the weaver
+Journal/<year>/<date>.md                      one line per session               (code)
+index.md   log.md                             catalogue, operations log          (code)
+AGENTS.md                                     the conventions (yours alone to edit)
+.memex/                                       ledger, project → folder mapping, refusals, language
 ```
 
-- **Page vivante.** Elle dit ce qui est vrai aujourd'hui : en bref, grandes lignes, décisions,
-  pistes écartées, problèmes connus, questions ouvertes. On la réécrit ; on n'y empile pas.
-- **Fiche de décision.** Contexte, options, décision, pourquoi, conséquences. Jamais réécrite. Un
-  revirement crée une nouvelle fiche ; l'ancienne passe à `statut: remplacee`.
-- **Provenance.** Chaque page porte dans son en-tête la liste des condensés qui l'ont nourrie.
-- **Conventions.** `AGENTS.md` est injecté dans chaque invite. Le modifier, c'est changer le
-  comportement des trois agents.
+- **Living page.** It says what is true today: in brief, the broad outline, decisions, dead ends,
+  known problems, open questions. It is rewritten; nothing is piled onto it.
+- **Decision record.** Context, options, decision, why, consequences. Never rewritten. A reversal
+  creates a new record; the old one changes to `status: superseded`.
+- **Provenance.** Each page carries in its front matter the list of segments that fed it.
+- **Conventions.** `AGENTS.md` is injected into every prompt. Changing it changes the behaviour of
+  the three agents.
+- **Language.** The layout above is that of an English wiki. A wiki is written in one language
+  (`en` by default, `fr` available), recorded in `.memex/wiki.json`. The language sets the folder
+  names, the front-matter keys and values, and the generated text: where an English wiki has
+  `Projects/Solitaire/Solitaire.md`, a French one has `Projets/Solitaire/Solitaire.md`. See D41.
 
-## 6. Les trois agents
+## 6. The three agents
 
-| | Archiviste | Tisseur | Vérificateur |
+| | Archivist | Weaver | Curator |
 |---|---|---|---|
-| Rôle | Intègre ce qu'apportent les sessions | Relie les pages, tient `Concepts/` | Resserre : doublons, périmé, pages trop longues |
-| Quand | À chaque condensé | Après l'archiviste, si des pistes existent | Chaque semaine |
-| Risque | Additif | Additif | Destructif |
-| Application | Directe | Directe | **Après mon accord** |
-| Peut | Ajouter, compléter | Entourer de `[[…]]`, section « Voir aussi », pages de concept | Modifier, fusionner, supprimer |
-| Ne peut pas | Supprimer, renommer, toucher une fiche existante, écrire dans `Concepts/` | Changer un mot du texte, toucher une fiche | Toucher une fiche de décision |
+| Role | Integrates what the sessions bring | Links the pages, maintains `Concepts/` | Tightens: duplicates, stale content, pages that are too long |
+| When | On every segment | After the archivist, if there are leads | Every week |
+| Risk | Additive | Additive | Destructive |
+| Applied | Directly | Directly | **After your approval** |
+| May | Add, complete | Wrap in `[[…]]`, add a "See also" section, write concept pages | Modify, merge, delete |
+| May not | Delete, rename, touch an existing record, write in `Concepts/` | Change a word of the text, touch a record | Touch a decision record |
 
-**Le tisseur** part d'un contrôle sans modèle : titres de pages cités sans lien, entités citées
-dans au moins deux dossiers sans page à elles, liens cassés. Le modèle tranche les homonymes et
-rédige la page transverse. Il ne se réveille pas tant que le wiki a moins de douze pages, ni si
-les pistes sont les mêmes qu'au passage précédent.
+**The weaver** starts from a check without a model: page titles mentioned without a link, entities
+mentioned in at least two folders without a page of their own, broken links. The model settles the
+homonyms and writes the cross-cutting page. It does not wake up while the wiki has fewer than
+twelve pages, nor if the leads are the same as on the previous run.
 
-**Le vérificateur** fait un diagnostic en lecture seule, puis applique chaque action dans un commit
-séparé, sur une branche de revue. Je reçois la liste ; je réponds « ok », « ok sauf la 2 » ou
-« non ». Approuver reporte les commits choisis sur `main`. Une action refusée est notée et n'est
-plus reproposée. Une revue sans réponse expire au bout de dix jours. Une page supprimée reste dans
-l'historique : `memex server restore "Chemin/Page.md"`.
+**The curator** makes a read-only diagnosis, then applies each action in a separate commit, on a
+review branch. You receive the list; you answer "ok", "ok except 2" or "no". Approving carries the
+chosen commits over to `main`. A rejected action is recorded and is not proposed again. A review
+left unanswered expires after ten days. A deleted page stays in the history:
+`memex server restore "Path/Page.md"`.
 
-## 7. Sécurité
+## 7. Security
 
-| Menace | Parade |
+| Threat | Countermeasure |
 |---|---|
-| Un secret part dans un condensé | Masquage sur l'hôte, avant tout envoi. Fichiers en mode 600 |
-| Une session de travail est capturée | Exclusions par chemin et par dépôt ; `.memex-ignore` ; `#memex-off` |
-| Une clé d'hôte est volée | Elle ne donne que la porte : dépôt de condensés, lecture du wiki |
-| Un condensé forgé vise un autre dossier | L'appareil est imposé par la boîte de dépôt ; aucun champ de l'en-tête ne forme un chemin |
-| Le serveur est compromis | Il ne peut ouvrir aucune connexion vers mes machines (sens unique, règles Tailscale) |
-| Un condensé contient une instruction malveillante | L'extraction n'a aucun outil. L'intégration n'écrit que dans sa copie de travail. Le diff est contrôlé |
-| Un agent écrit ailleurs que prévu | Bac à sable par appel : système en lecture seule, `~/.ssh` masqué, écriture limitée à la copie de travail et à l'état du harnais |
-| Un agent s'ajoute une clé SSH | `authorized_keys` appartient à root |
-| Un agent modifie le pipeline | Le code est dans `/opt/memex`, propriété de root |
-| Un agent atteint les autres services du serveur | Compte sans sudo ; unité systemd cloisonnée ; `--deny /var/www` rend ces dossiers invisibles |
-| Un agent détruit du contenu | Garde-fous par rôle sur le diff ; historique git ; sauvegardes quotidiennes |
-| Le serveur lit mes notes personnelles | Vault séparé pour le wiki, avec sa propre phrase secrète |
+| A secret leaves in a segment | Redaction on the host, before anything is sent. Files in mode 600 |
+| A session from your job is captured | Exclusions by path and by repository; `.memex-ignore`; `#memex-off` |
+| A host key is stolen | It gives the gate and nothing else: dropping segments, reading the wiki |
+| A forged segment targets another folder | The device is imposed by the inbox; no field of the header forms a path |
+| The server is compromised | It cannot open any connection to your machines (one-way, Tailscale rules) |
+| A segment contains a malicious instruction | Extraction has no tools. Integration writes only in its working copy. The diff is checked |
+| An agent writes somewhere other than intended | Per-call sandbox: read-only system, `~/.ssh` hidden, writes limited to the working copy and the harness's own state |
+| An agent adds an SSH key for itself | `authorized_keys` belongs to root |
+| An agent modifies the pipeline | The code is in `/opt/memex`, owned by root |
+| An agent reaches the other services on the server | Account without sudo; hardened systemd unit; `--deny /var/www` makes those folders invisible |
+| An agent destroys content | Per-role guardrails on the diff; git history; daily backups |
+| The server reads your personal notes | Separate vault for the wiki, with its own passphrase |
 
-Ce qui reste hors de portée de ces parades : un agent peut **lire** tout ce que le compte `memex`
-peut lire (condensés, wiki, sa propre configuration) et dispose du réseau pour joindre son modèle.
-Une injection réussie pourrait donc faire sortir du contenu du wiki. C'est la raison de ne pas y
-mettre de secrets, et de garder mes notes personnelles dans un autre vault.
+What stays out of reach of these countermeasures: an agent can **read** everything the `memex`
+account can read (segments, wiki, its own configuration) and has the network to reach its model. A
+successful injection could therefore get wiki content out. That is the reason not to put secrets
+in the wiki, and to keep your personal notes in another vault.
 
-## 8. Reconstruction
+## 8. Rebuilding
 
-Rien n'existe en un seul exemplaire :
+Nothing exists in a single copy:
 
-| Donnée | Où elle est aussi |
+| Data | Where else it is |
 |---|---|
-| Le programme | Ce dépôt, sur chaque machine où il est cloné |
-| Le wiki et son historique | Clone complet sur chaque hôte ; sauvegarde quotidienne |
-| Les condensés | `sent/` sur l'hôte qui les a produits ; sauvegarde quotidienne |
-| Les sauvegardes | Rapatriées chaque jour par les hôtes |
+| The program | This repository, on every machine where it is cloned |
+| The wiki and its history | Full clone on every host; daily backup |
+| The segments | `sent/` on the host that produced them; daily backup |
+| The backups | Pulled every day by the hosts |
 
-Trois chemins, décrits pas à pas dans le [guide d'exploitation](RUNBOOK.md) :
+Three paths, described step by step in the [runbook](RUNBOOK.md):
 
-- **Nouvelle machine de travail** : cloner ce dépôt, `host/install.sh --server …`, autoriser la clé.
-- **Nouveau serveur, avec une sauvegarde** : `server/deploy.sh`, puis `memex server restore-backup`.
-- **Nouveau serveur, sans rien** : `server/deploy.sh`, puis `memex resend && memex ship` sur chaque
-  hôte. Le wiki est reconstruit à partir des condensés.
+- **New work machine**: clone this repository, `host/install.sh --server …`, authorise the key.
+- **New server, with a backup**: `server/deploy.sh`, then `memex server restore-backup`.
+- **New server, with nothing**: `server/deploy.sh`, then `memex resend && memex ship` on each
+  host. The wiki is rebuilt from the segments.
 
-Aucun chemin, nom de machine ou adresse n'est écrit dans le code : tout est dans `memex.env`.
+No path, machine name or address is written in the code: everything is in `memex.env`.
 
-## 9. Registre des décisions
+## 9. Decision register
 
-Chaque entrée : la décision, pourquoi, et ce qui a été écarté.
+Each entry: the decision, why, and what was ruled out.
 
-### Fondations
+### Foundations
 
-**D1 — Un wiki entretenu par des agents, sur le modèle « LLM wiki » de Karpathy.**
-Trois couches : sources brutes immuables, wiki écrit par le modèle, fichier de conventions.
-*Pourquoi :* la connaissance est compilée une fois et tenue à jour, au lieu d'être redécouverte à
-chaque question. *Écarté :* une base vectorielle interrogée à la demande.
+**D1 — A wiki maintained by agents, on the model of Karpathy's
+["LLM Wiki"](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).**
+Three layers: immutable raw sources, a wiki written by the model, a conventions file.
+*Why:* knowledge is compiled once and kept up to date, instead of being rediscovered at every
+question. *Ruled out:* a vector database queried on demand.
 
-**D2 — L'archive et le wiki sont deux choses.**
-Toutes les sessions deviennent des condensés ; le wiki n'en retient qu'une petite part.
-*Pourquoi :* la plupart des sessions ne contiennent rien de durable, et un wiki qui grossit à
-chaque session cesse d'être lu.
+**D2 — The archive and the wiki are two different things.**
+Every session becomes segments; the wiki retains only a small part of them.
+*Why:* most sessions contain nothing durable, and a wiki that grows with every session stops
+being read.
 
-**D3 — Du markdown, lu dans Obsidian ; pas de base de données.**
-*Écarté :* claude-mem (SQLite et base vectorielle par machine, illisible dans Obsidian) ;
-basic-memory (n'écrit que quand l'agent décide de noter) ; llmwiki en entier (structure générique,
-pensé pour une seule machine).
+**D3 — Markdown, read in Obsidian; no database.**
+*Ruled out:* claude-mem (SQLite and a vector database per machine, unreadable in Obsidian);
+basic-memory (writes only when the agent decides to take a note); llmwiki as a whole (generic
+structure, designed for a single machine).
 
-**D4 — Python, bibliothèque standard seulement.**
-*Pourquoi :* s'installe partout où il y a Python 3.9 et git, sans environnement virtuel ni paquet.
+**D4 — Python, standard library only.**
+*Why:* it installs anywhere there is Python 3.9 and git, with no virtual environment and no
+package.
 
 ### Capture
 
-**D5 — Un balayeur sans modèle sur chaque machine, plutôt qu'un agent à la fin de chaque session.**
-*Pourquoi :* même mécanisme pour tous les harnais, rattrapage des sessions interrompues, reprise
-de l'historique existant, aucun coût. Les hooks ne servent qu'à le déclencher plus tôt.
+**D5 — A sweeper without a model on each machine, rather than an agent at the end of each session.**
+*Why:* the same mechanism for every harness, interrupted sessions are caught up, the existing
+history is backfilled, no cost. The hooks only serve to trigger it sooner.
 
-**D6 — Des segments immuables, un curseur par session.**
-*Pourquoi :* un fichier jamais modifié se transporte, se déduplique et se rejoue sans risque.
-*Écarté :* un condensé par session, réécrit à chaque passage, qui obligeait le serveur à calculer
-ce qui avait changé.
+**D6 — Immutable segments, one cursor per session.**
+*Why:* a file that is never modified can be transported, deduplicated and replayed without risk.
+*Ruled out:* one segment per session, rewritten on every sweep, which forced the server to work
+out what had changed.
 
-**D7 — Garder mes messages et les réponses finales ; écarter outils et narration.**
-*Mesuré :* mes 181 Mo de transcripts donnent 660 Ko de condensés.
+**D7 — Keep your messages and the final answers; leave out tools and narration.**
+*Measured on the author's machine:* 181 MB of transcripts give 660 KB of segments.
 
-**D8 — Masquer les secrets sur la machine, par motifs.**
-*Pourquoi :* rien de sensible ne doit quitter l'hôte, quoi qu'il arrive ensuite.
-*Écarté :* un outil externe (gitleaks) comme dépendance obligatoire.
+**D8 — Redact secrets on the machine, by patterns.**
+*Why:* nothing sensitive must leave the host, whatever happens afterwards.
+*Ruled out:* an external tool (gitleaks) as a mandatory dependency.
 
-**D9 — Exclusions explicites ; aucune session de travail par défaut dans l'exemple.**
-Par chemin, par dépôt, par fichier marqueur, par marqueur dans la session.
+**D9 — Explicit exclusions; no session from your job by default in the example.**
+By path, by repository, by marker file, by marker in the session.
 
-**D10 — L'identité d'un projet est son dépôt distant.**
-*Pourquoi :* stable d'une machine à l'autre et à travers les worktrees. Repli sur le nom du dossier.
+**D10 — The identity of a project is its remote repository.**
+*Why:* stable from one machine to the next and across worktrees. Falls back to the folder name.
 
-**D11 — `--no-backfill` à l'installation.**
-*Pourquoi :* reprendre tout l'historique coûte un appel par session ; sur une nouvelle machine, on
-peut vouloir ne capturer que la suite.
+**D11 — `--no-backfill` at installation.**
+*Why:* backfilling the whole history costs one call per session; on a new machine, you may want to
+capture only what comes next.
 
-### Transport et serveur
+### Transport and server
 
-**D12 — Le serveur est le centre ; pas de GitHub.**
-*Pourquoi :* le wiki contient des discussions personnelles ; avec un serveur à moi, il ne sort pas
-de chez moi. Les clones des hôtes servent de sauvegarde. *Écarté :* un dépôt privé GitHub comme
-pivot, et les tâches planifiées dans le cloud.
+**D12 — The server is the centre; no GitHub.**
+*Why:* the wiki contains personal conversations; on a server of your own, it stays in your hands.
+The clones on the hosts serve as backups. *Ruled out:* a private GitHub repository as the hub,
+and scheduled tasks in the cloud.
 
-**D13 — Sens unique : l'hôte appelle, le serveur ne rappelle jamais.**
-*Pourquoi :* un serveur exposé ne doit pas avoir de chemin vers mon poste.
-*Écarté :* qu'Hermes pilote des agents sur ma machine.
+**D13 — One-way: the host calls, the server never calls back.**
+*Why:* an exposed server must not have a path to your workstation.
+*Ruled out:* letting Hermes drive agents on your machine.
 
-**D14 — Une porte SSH à commande forcée, plutôt que `rsync`.**
-Changement par rapport à ce qui était envisagé (`rsync`). Une archive passée à une commande forcée
-est meilleure sur quatre points : clé limitée à trois verbes, aucun outil à installer, dépôt
-atomique, et pipeline réveillé dans la foulée.
+**D14 — An SSH gate with a forced command, rather than `rsync`.**
+A change from what was first planned (`rsync`). An archive piped to a forced command is better on
+four counts: a key limited to three verbs, no tool to install, atomic delivery, and the pipeline
+woken straight away.
 
-**D15 — Git pour le wiki seulement.**
-*Pourquoi :* annuler un passage entier, proposer avant d'appliquer (branche du vérificateur),
-servir les hôtes quand Obsidian est fermé. L'historique de LiveSync existe, mais il est par
-fichier et ne survit pas à une reconstruction de sa base. *Écarté :* git pour les condensés, et le
-dossier `_archive/` (l'historique suffit ; `log.md` garde la trace des suppressions).
+**D15 — Git for the wiki only.**
+*Why:* to undo a whole run, to propose before applying (the curator's branch), to serve the hosts
+when Obsidian is closed. LiveSync has a history, but it is per file and does not survive a rebuild
+of its database. *Ruled out:* git for the segments, and an `_archive/` folder (the history is
+enough; `log.md` keeps track of deletions).
 
-**D16 — Planification par systemd, pas par le planificateur d'Hermes.**
-Changement par rapport à ce qui était envisagé. *Pourquoi :* le pipeline continue de tourner si la
-passerelle d'Hermes est arrêtée, et il ne dépend d'aucun harnais. Hermes reste le rédacteur et
-l'interlocuteur.
+**D16 — Scheduling by systemd, not by Hermes's scheduler.**
+A change from what was first planned. *Why:* the pipeline keeps running if Hermes's gateway is
+stopped, and it depends on no harness. Hermes remains the writer and the interlocutor.
 
-**D17 — Le harnais est une commande shell configurable.**
-*Pourquoi :* ne dépendre ni d'Hermes, ni de Claude, ni de Codex. Par défaut Hermes, donc mon
-abonnement Codex, sans jeton Claude sur le serveur.
+**D17 — The harness is a configurable shell command.**
+*Why:* to depend on neither Hermes, nor Claude, nor Codex. Hermes by default, which in the
+author's setup means a Codex subscription, with no Claude token on the server.
 
-**D18 — Une configuration unique, en variables.**
-Même fichier et même format sur l'hôte et le serveur. Installeurs rejouables. Mode sans root, et
-mode « tout sur une machine » (`MEMEX_SERVER_SSH=local`) pour essayer sans serveur.
+**D18 — A single configuration, in variables.**
+Same file and same format on the host and on the server. Installers that can be re-run. A mode
+without root, and an "everything on one machine" mode (`MEMEX_SERVER_SSH=local`) to try it without
+a server.
 
 ### Pipeline
 
-**D19 — Les agents ne travaillent jamais dans le wiki vivant.**
-Copie de travail git jetable, contrôle, puis fusion en avance rapide. *Pourquoi :* un état à moitié
-écrit n'atteint jamais Obsidian, et un passage raté se jette sans trace.
+**D19 — Agents never work in the live wiki.**
+A disposable git working copy, a check, then a fast-forward merge. *Why:* a half-written state
+never reaches Obsidian, and a failed run is thrown away without a trace.
 
-**D20 — Le modèle rédige, le code tient les comptes.**
-Index, journal, registre, provenance et `log.md` sont générés. *Pourquoi :* c'est ce qu'un modèle
-fait le moins fiablement, et ce qu'un programme fait sans erreur. Quand le code complète l'en-tête
-d'une page, il ne remplace que ses propres champs : le reste, écrit à la main, est conservé tel quel.
+**D20 — The model writes, the code keeps the books.**
+Index, journal, ledger, provenance and `log.md` are generated. *Why:* this is what a model does
+least reliably, and what a program does without error. When the code completes the front matter of
+a page, it replaces only its own fields: the rest, written by hand, is kept as it is.
 
-**D21 — L'archiviste en deux temps.**
-Extraction sans outil, puis intégration. *Pourquoi :* la plupart des sessions s'arrêtent à
-l'extraction, qui est bon marché ; l'intégration reçoit une liste courte au lieu d'un transcript ;
-et le texte venu de l'extérieur ne rencontre jamais un agent doté d'outils.
+**D21 — The archivist works in two steps.**
+Extraction without tools, then integration. *Why:* most sessions stop at extraction, which is
+cheap; integration receives a short list instead of a transcript; and text that came from outside
+never meets an agent that has tools.
 
-**D22 — Les garde-fous sont vérifiés sur le diff.**
-Corriger d'office ce qui est cosmétique, annuler ce qui est hors périmètre, refuser ce qui est
-destructif. Un second essai reçoit les fautes ; puis quarantaine. Toute erreur interne pendant le
-traitement d'un condensé compte comme un échec : un condensé ne peut pas bloquer les suivants.
+**D22 — Guardrails are checked on the diff.**
+Fix automatically what is cosmetic, undo what is out of scope, reject what is destructive. A
+second attempt receives the faults; then quarantine. Any internal error while a segment is being
+processed counts as a failure: one segment cannot block the ones that follow.
 
-**D39 — Une panne de l'agent ne coûte aucun condensé.**
-Quand un appel à l'agent échoue, une sonde lui demande un mot. S'il répond, l'échec tient au
-condensé et compte. S'il ne répond pas, le passage s'arrête : aucun échec n'est compté, la file
-reste intacte, je suis prévenu une fois, et le passage suivant réessaie. De même, un agent qui
-rend la main sans page ni compte rendu est un échec, pas une session « sans suite ».
-*Pourquoi :* sans cela, un quota atteint pendant une reprise d'historique envoyait toute la file
-en quarantaine en trois passages, soit 45 minutes. Trouvé en relisant le code avant la première
-reprise réelle, pas en production.
+**D39 — An agent outage costs no segment.**
+When a call to the agent fails, a probe asks it for one word. If it answers, the failure is down
+to the segment and counts. If it does not, the run stops: no failure is counted, the queue stays
+intact, you are notified once, and the next run tries again. Likewise, an agent that hands back
+control with neither a page nor a report is a failure, not a session "with nothing to keep".
+*Why:* without this, a quota reached during a backfill sent the whole queue to quarantine in three
+runs, that is, 45 minutes. Found by re-reading the code before the first real backfill, not in
+production.
 
-**D40 — Trois réglages tirés de la première reprise réelle (66 sessions, 2026-11-16).**
-- *L'en-tête d'une page ne garde que ses cinq dernières sources.* Une page vivante touchée par 27
-  sessions traînait 27 lignes de provenance ; la liste complète reste dans le registre et dans git.
-- *Le tisseur reçoit cinq concepts candidats, les plus partagés d'abord, et doit lire leurs pages.*
-  Avec huit candidats par ordre alphabétique et la consigne « ne rien faire est acceptable », il
-  n'avait créé qu'une page transverse pour 16 candidats, sans lire les pages citées. Un candidat
-  qu'il écarte après lecture n'est reproposé que s'il gagne un dossier.
-- *Une page vivante déjà longue ne grossit plus.* La liste des pages la signale à l'archiviste, qui
-  range le détail dans une page complémentaire par thème. Une page fourre-tout avait atteint
-  30 000 caractères.
+**D40 — Three adjustments drawn from the first real backfill (66 sessions, 2026-11-16).**
+- *The front matter of a page keeps only its last five sources.* A living page touched by 27
+  sessions was dragging 27 lines of provenance along; the full list remains in the ledger and in
+  git.
+- *The weaver receives five candidate concepts, the most widely shared first, and must read their
+  pages.* With eight candidates in alphabetical order and the instruction "doing nothing is
+  acceptable", it had created only one cross-cutting page for 16 candidates, without reading the
+  pages cited. A candidate it dismisses after reading is proposed again only if it gains a folder.
+- *A living page that is already long stops growing.* The list of pages flags it to the archivist,
+  which files the detail in a companion page per theme. One catch-all page had reached 30,000
+  characters.
 
-**D23 — Un rédacteur à la fois.**
-Un verrou unique couvre l'archiviste, le tisseur, le vérificateur et les approbations.
+**D23 — One writer at a time.**
+A single lock covers the archivist, the weaver, the curator and the approvals.
 
-### Structure du wiki
+### Wiki structure
 
-**D24 — Des dossiers : projets, sujets, concepts.**
-Une page vivante par dossier, toujours dans un répertoire à son nom. *Écarté :* une hiérarchie de
-thèmes, qui complique le rangement sans rien apporter que les concepts ne fassent.
+**D24 — Folders: projects, topics, concepts.**
+One living page per folder, always in a directory that bears its name. *Ruled out:* a hierarchy of
+themes, which complicates filing without bringing anything the concepts do not.
 
-**D25 — Les fiches de décision sont immuables.**
-*Pourquoi :* c'est l'historique qui explique pourquoi on en est là.
+**D25 — Decision records are immutable.**
+*Why:* it is the history that explains why things are where they are.
 
-**D26 — Trois agents.**
-L'archiviste ajoute, le tisseur relie, le vérificateur resserre : trois risques, trois cadences,
-trois périmètres. Le tisseur est séparé parce qu'il lui faut une vue d'ensemble que l'archiviste
-n'a pas.
+**D26 — Three agents.**
+The archivist adds, the weaver links, the curator tightens: three risks, three cadences, three
+scopes. The weaver is separate because it needs an overall view that the archivist does not have.
 
-**D27 — Le vérificateur propose ; j'approuve.**
-Par messagerie, action par action. Les refus sont mémorisés.
+**D27 — The curator proposes; you approve.**
+By messaging, action by action. Refusals are remembered.
 
-**D28 — En français.**
-Contenu, conventions et invites. Les noms de dossiers suivent.
+**D28 — In French.** *(Superseded by D41.)*
+Content, conventions and prompts. The folder names follow.
 
-### Lecture et synchronisation
+### Reading and synchronisation
 
-**D29 — Les agents lisent les fichiers ; pas de recherche Obsidian ni de MCP.**
-*Pourquoi :* la CLI d'Obsidian et les serveurs MCP exigent l'application ouverte. `qmd` reste
-possible plus tard.
+**D29 — Agents read the files; no Obsidian search, no MCP.**
+*Why:* Obsidian's CLI and the MCP servers require the application to be open. `qmd` remains
+possible later.
 
-**D30 — Hook de démarrage instantané, synchronisation en arrière-plan.**
-*Pourquoi :* ouvrir une session ne doit jamais attendre le réseau.
+**D30 — Instant session-start hook, synchronisation in the background.**
+*Why:* opening a session must never wait for the network.
 
-**D31 — Le vault est un dossier ordinaire, relié au dépôt par un manifeste.**
-*Pourquoi :* aucun fichier git ne doit passer par LiveSync, et mes modifications dans Obsidian
-doivent revenir. En cas de conflit, je gagne.
+**D31 — The vault is an ordinary folder, tied to the repository by a manifest.**
+*Why:* no git file must go through LiveSync, and your edits in Obsidian must come back. In a
+conflict, you win.
 
-**D32 — Un vault Obsidian séparé pour le wiki (recommandé ; le choix reste ouvert).**
-*Pourquoi :* ma synchronisation est chiffrée de bout en bout ; donner la phrase secrète du vault
-principal au serveur lui ouvrirait toutes mes notes. *Coût :* pas de lien direct vers elles.
-memex n'impose rien : il écrit dans `MEMEX_VAULT_DIR`, quel que soit le vault que ce dossier sert.
+**D32 — A separate Obsidian vault for the wiki (recommended; the choice remains open).**
+*Why:* the synchronisation is end-to-end encrypted; giving the server the passphrase of your main
+vault would open all your notes to it. *Cost:* no direct link to them. memex imposes nothing: it
+writes to `MEMEX_VAULT_DIR`, whichever vault that folder serves.
 
-### Sécurité et exploitation
+### Security and operations
 
-**D33 — Un bac à sable par appel d'agent.**
-Ajouté en cours de route : à l'essai, Hermes a écrit dans mon répertoire personnel au lieu de son
-dossier de travail. Bubblewrap, avec repli si indisponible (`MEMEX_SANDBOX=bwrap` pour l'exiger).
+**D33 — A sandbox for each agent call.**
+Added along the way: during a trial on the author's machine, Hermes wrote to the home directory
+instead of its working folder. Bubblewrap, with a fallback if it is unavailable
+(`MEMEX_SANDBOX=bwrap` to require it).
 
-**D34 — Compte dédié, code et clés à root, unités cloisonnées.**
+**D34 — Dedicated account, code and keys owned by root, hardened units.**
 
-**D35 — Sauvegarde quotidienne, rapatriée par les hôtes.**
+**D35 — Daily backup, pulled by the hosts.**
 
-**D36 — Les sessions du pipeline ne se capturent pas elles-mêmes.**
-Marqueur en tête de chaque invite, et options « sans persistance » de Claude Code et Codex.
+**D36 — The pipeline's own sessions do not capture themselves.**
+A marker at the top of every prompt, and the "no persistence" options of Claude Code and Codex.
 
-**D37 — Import ChatGPT et claude.ai : fourni, expérimental.**
-Écrit d'après la structure connue des exports, sans export réel sous la main. Le connecteur MCP
-pour écrire dans le wiki depuis ces applications n'est pas construit.
+**D37 — ChatGPT and claude.ai import: provided, experimental.**
+Written from the known structure of the exports, without a real export at hand. The MCP connector
+for writing to the wiki from those applications is not built.
 
-**D38 — Le nom : memex.**
-Le « memex » de Vannevar Bush (1945), que cite Karpathy : une mémoire personnelle dont les liens
-comptent autant que les documents.
+**D38 — The name: memex.**
+Vannevar Bush's "memex" (1945), which Karpathy's
+["LLM Wiki"](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) cites: a personal
+memory in which the links matter as much as the documents.
 
-## 10. Ce qui est vérifié, ce qui ne l'est pas
+### Language
 
-**Vérifié sur cette machine (2026-11-16) :**
+**D41 — The project is in English; a wiki has a language.**
+Code, documentation, the default prompt set, command output and logs are in English. A wiki is
+written in one language (`en` by default, `fr` available), chosen when it is created with
+`MEMEX_LANG` or `server/install.sh --lang`, and recorded in the wiki itself (`.memex/wiki.json`)
+so that the server, every host and a rebuilt server agree. The language decides the folder names,
+the front-matter keys and values, the generated text (index, journal, log) and which prompt set
+and conventions file are used (`prompts/<lang>/`, `wiki_template/<lang>/AGENTS.md`). The machine
+protocol between prompts and code (JSON keys, kinds, statuses) is English in every language.
+*Why:* the notes belong to their author and stay in the author's language, while the tool stays
+usable and maintainable by anyone; recording the language in the wiki keeps a host and a server
+from disagreeing. Adding a language takes one `Locale` in `src/memex/i18n.py`, a prompt folder
+and a conventions file.
 
-- 74 tests automatiques, dont 25 scénarios de bout en bout (trajet nominal, reprises, garde-fous,
-  quarantaine, panne de l'agent, revue, restauration, reconstruction, condensé forgé).
-- Une relecture indépendante du code par un second agent, qui a reproduit cinq défauts (dont un
-  condensé forgé capable d'écrire hors de sa boîte). Tous sont corrigés et couverts par un test.
-- Le balayeur sur mon historique réel : 66 condensés depuis 69 sessions, en 1,2 seconde.
-- Le pipeline complet avec un vrai modèle (Claude, via `claude -p`) sur six sessions réelles : six
-  intégrations, aucun échec, quatre pages de concept créées par le tisseur.
-- Le même pipeline avec Hermes comme rédacteur (son modèle par défaut), dans le bac à sable, sur
-  quatre sessions réelles : trois intégrations, une session jugée sans suite, aucun échec.
-- Le vérificateur avec un vrai modèle, dans le bac à sable : deux actions proposées, une approuvée
-  et appliquée, une refusée et mémorisée.
-- Les trois harnais (Hermes, Claude Code, Codex), aux trois niveaux de droits, dans le bac à sable.
-- L'exclusion des sessions du pipeline, sur la base réelle d'Hermes.
-- La porte SSH face à un vrai `sshd` : shell, commande arbitraire, autre dépôt et écriture refusés.
-- Les deux installeurs, dans un répertoire personnel jetable ; les unités avec `systemd-analyze`.
+## 10. What is verified and what is not
 
-**Non vérifié, faute d'accès :**
+**Verified on the author's machine (2026-11-16):**
 
-- L'installation réelle sur le serveur : mode système, unités cloisonnées, et surtout **le bac à
-  sable à l'intérieur de l'unité systemd**. `memex server status` dit s'il est actif.
-- Le client LiveSync sans écran, Tailscale, la passerelle de messagerie d'Hermes et son skill.
-- Le pipeline complet avec Codex comme rédacteur (seuls ses appels unitaires l'ont été).
-- L'injection du hook `SessionStart` dans Codex (un rapport de bogue existe sur une version).
-- Le chemin sans systemd (cron), macOS, et les formats réels des exports ChatGPT et claude.ai.
+- 117 automated tests, including 29 end-to-end scenarios (nominal path, session continuations,
+  guardrails, quarantine, agent outage, review, restore, rebuild, forged segment), on an English wiki
+  and on a French one.
+- An independent review of the code by a second agent, which reproduced five defects (including a
+  forged segment able to write outside its inbox). All are fixed and covered by a test.
+- The sweeper on the author's real history: 66 segments from 69 sessions, in 1.2 seconds.
+- The full pipeline with a real model (Claude, via `claude -p`) on six real sessions: six
+  integrations, no failure, four concept pages created by the weaver.
+- The same pipeline with Hermes as the writer (its default model), in the sandbox, on four real
+  sessions: three integrations, one session judged to hold nothing to keep, no failure.
+- The curator with a real model, in the sandbox: two actions proposed, one approved and applied,
+  one rejected and remembered.
+- A full backfill of the author's history (2026-11-16): 66 segments processed in 31 minutes with
+  Claude as the agent, inside the sandbox, under the systemd user units: no failure, nothing
+  quarantined, 71 pages. Then the weaver and the curator on that wiki (five actions proposed).
+- The three harnesses (Hermes, Claude Code, Codex), at the three permission levels, in the sandbox.
+- The exclusion of the pipeline's own sessions, on Hermes's real database.
+- The SSH gate against a real `sshd`: shell, arbitrary command, other repository and writing all
+  refused.
+- Both installers, in a throwaway home directory; the units with `systemd-analyze`.
 
-## 11. Limites connues et suites possibles
+**Not verified, for lack of access:**
 
-- **Sessions dans le cloud** (claude.ai/code lancé depuis le web) : pas de transcript local, donc
-  pas de capture. Les sessions pilotées à distance mais exécutées sur une machine le sont.
-- **ChatGPT et Claude web** : par export manuel seulement.
-- **Une session très longue** est découpée en plusieurs condensés, traités séparément : un élément
-  à cheval sur deux morceaux peut être vu deux fois. L'archiviste cherche l'existant avant d'écrire.
-- **Coût** : un à deux appels par session non triviale. La reprise d'un long historique se fait par
-  lots de 25.
-- **Suites** : connecteur MCP du wiki pour Claude web ; recherche sémantique (`qmd`) quand le wiki
-  dépassera quelques centaines de pages ; page d'architecture amorcée depuis le dépôt de chaque projet.
+- The real installation on the server: system mode, hardened units, and above all **the sandbox
+  inside the systemd unit**. `memex server status` says whether it is active.
+- The headless LiveSync client, Tailscale, Hermes's messaging gateway and its skill.
+- The full pipeline with Codex as the writer (only its individual calls were).
+- The injection of the `SessionStart` hook in Codex (a bug report exists for one version).
+- The path without systemd (cron), macOS, and the real formats of the ChatGPT and claude.ai
+  exports.
+
+**Prompt sets (a wiki has a language, see D41):**
+
+- French prompt set: exercised on the 66-segment backfill of 2026-11-16, and again on 2026-11-17
+  after the machine protocol moved to English keys.
+- English prompt set: exercised on 2026-11-17.
+- Both runs of 2026-11-17 used the same four real sessions, with Claude as the agent: four
+  integrations, concept pages created by the weaver, a curator review proposed and approved.
+  In the French run, one extraction reply held two JSON objects (the model corrected itself): it
+  failed, was retried on the next run and succeeded. The parser now takes the last object.
+
+## 11. Known limits and possible next steps
+
+- **Cloud sessions** (claude.ai/code started from the web): no local transcript, so no capture.
+  Sessions driven remotely but executed on a machine are captured.
+- **ChatGPT and Claude on the web**: by manual export only.
+- **A very long session** is split into several segments, processed separately: an item that
+  straddles two pieces can be seen twice. The archivist looks for what already exists before
+  writing.
+- **Cost**: one to two calls per non-trivial session. Backfilling a long history is done in
+  batches of 25.
+- **Next steps**: an MCP connector to the wiki for Claude on the web; semantic search (`qmd`) once
+  the wiki exceeds a few hundred pages; an architecture page bootstrapped from the repository of
+  each project.

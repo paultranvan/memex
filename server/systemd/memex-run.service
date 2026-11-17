@@ -1,5 +1,5 @@
 [Unit]
-Description=memex : passage de l'archiviste et du tisseur
+Description=memex: archivist and weaver run
 After=network-online.target
 Wants=network-online.target
 
@@ -13,9 +13,9 @@ Environment=PATH=@MEMEX_HOME@/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=@MEMEX_BIN@ server run
 Nice=10
 TimeoutStartSec=3600
-# Un passage en échec (agent indisponible, condensé refusé) ne doit pas marquer l'unité en panne.
+# A failed run (agent unavailable, segment rejected) must not mark the unit as failed.
 SuccessExitStatus=1
-# ── Cloisonnement : les agents n'écrivent que dans le dossier de memex ──
+# ── Confinement: the agents write only inside the memex directory ──
 NoNewPrivileges=yes
 ProtectSystem=strict
 ReadWritePaths=@MEMEX_HOME@ @EXTRA_RW@

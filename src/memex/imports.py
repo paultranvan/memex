@@ -1,8 +1,8 @@
-"""Import des exports officiels de ChatGPT et de claude.ai (archive .zip ou conversations.json).
+"""Import of the official ChatGPT and claude.ai exports (.zip archive or conversations.json).
 
-Expérimental : écrit d'après la structure connue de ces exports, à valider sur
-un export réel. Chaque conversation devient un condensé ; un nouvel export ne
-reprend que les messages ajoutés depuis l'import précédent.
+Experimental: written from the known structure of these exports, still to be
+checked against a real one. Each conversation becomes a segment; a new export
+only picks up the messages added since the previous import.
 """
 from __future__ import annotations
 
@@ -30,8 +30,8 @@ class ImportReport:
 
     def summary(self) -> str:
         return (
-            f"{self.conversations} conversation(s) lue(s), {len(self.written)} condensé(s) écrit(s), "
-            f"{self.skipped_short} trop courte(s), {self.skipped_old} antérieure(s) à la date demandée"
+            f"{self.conversations} conversation(s) read, {len(self.written)} segment(s) written, "
+            f"{self.skipped_short} too short, {self.skipped_old} older than the requested date"
         )
 
 
@@ -65,7 +65,7 @@ def _chatgpt_text(content: Any) -> str:
         elif isinstance(part, dict) and isinstance(part.get("text"), str):
             parts.append(part["text"])
         elif isinstance(part, dict):
-            parts.append("[pièce jointe]")
+            parts.append("[attachment]")
     return "\n".join(p for p in parts if p).strip()
 
 
@@ -77,7 +77,7 @@ def chatgpt_messages(conversation: dict) -> Iterator[Message]:
         seen.add(node)
         chain.append(mapping[node])
         node = mapping[node].get("parent")
-    if not chain:  # export sans nœud courant : on prend l'ordre chronologique
+    if not chain:  # export without a current node: we take the chronological order
         chain = sorted(mapping.values(), key=lambda n: ((n.get("message") or {}).get("create_time") or 0), reverse=True)
     for entry in reversed(chain):
         message = entry.get("message") or {}
@@ -145,7 +145,7 @@ def run(config: Config, kind: str, path: Path, since: Optional[dt.datetime] = No
             segment = Segment(
                 source=source, device=config.device, session=ident, seq=entry["seq"], messages=part,
                 started=min(stamps) if stamps else fallback, ended=max(stamps) if stamps else fallback,
-                title=sweeper.redactor(title) or "conversation sans titre",
+                title=sweeper.redactor(title) or "untitled conversation",
             )
             if not dry_run:
                 atomic_write(config.outbox / segment.filename, segment.render(), 0o600)

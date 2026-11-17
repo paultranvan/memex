@@ -1,6 +1,6 @@
-// Règles d'accès du réseau Tailscale pour memex.
-// Sens unique : tes appareils → le serveur. Aucune règle n'a le serveur pour source,
-// donc il ne peut ouvrir aucune connexion vers tes machines.
+// Access rules of the Tailscale network for memex.
+// One way only: your devices → the server. No rule has the server as its source,
+// so it cannot open any connection to your machines.
 {
     "tagOwners": {
         "tag:vps": ["autogroup:admin"]
@@ -9,8 +9,8 @@
         {
             "action": "accept",
             "src": ["autogroup:member"],
-            // 22 : SSH (memex, administration). Ajoute ici les ports des services
-            // privés que tu veux joindre, par exemple 9119 pour le serveur Hermes.
+            // 22: SSH (memex, administration). Add here the ports of the private
+            // services you want to reach, for example 9119 for the Hermes server.
             "dst": ["tag:vps:22"]
         }
     ]

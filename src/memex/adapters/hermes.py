@@ -1,10 +1,11 @@
-"""Sessions Hermes : base SQLite ~/.hermes/state.db, lue en lecture seule.
+"""Hermes sessions: SQLite database ~/.hermes/state.db, opened read-only.
 
-Le curseur est l'identifiant du dernier message lu. Sert surtout sur le serveur,
-pour capturer les discussions tenues par messagerie.
+The cursor is the id of the last message read. Mostly useful on the server,
+to capture the conversations held over messaging.
 """
 from __future__ import annotations
 
+import contextlib
 import sqlite3
 from pathlib import Path
 from typing import Any, Iterator
@@ -21,10 +22,14 @@ class HermesAdapter(Adapter):
         self.db = Path(db_path)
         self.exclude = {s.lower() for s in exclude_sources}
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextlib.contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(f"file:{self.db}?mode=ro", uri=True, timeout=5)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            yield conn
+        finally:
+            conn.close()  # `with conn` alone would only end the transaction
 
     def discover(self) -> Iterator[SessionRef]:
         if not self.db.is_file():
@@ -42,7 +47,7 @@ class HermesAdapter(Adapter):
             if (row["source"] or "").lower() in self.exclude:
                 continue
             seen = parse_ts(row["seen"])
-            # `size` porte le dernier identifiant de message : il croît quand la session avance.
+            # `size` carries the last message id: it grows as the session moves on.
             yield SessionRef(self.name, str(row["id"]), self.db, seen.timestamp() if seen else 0.0, int(row["last_id"] or 0))
 
     def read(self, ref: SessionRef, cursor: Any, meta: dict) -> Chunk:
@@ -61,7 +66,7 @@ class HermesAdapter(Adapter):
                     (ref.session, last),
                 ).fetchall()
         except sqlite3.Error as exc:
-            return Chunk(cursor=last, meta=meta, skip=f"base Hermes illisible : {exc}")
+            return Chunk(cursor=last, meta=meta, skip=f"Hermes database unreadable: {exc}")
         if session:
             if session["title"]:
                 meta["title"] = session["title"]
@@ -78,7 +83,7 @@ class HermesAdapter(Adapter):
                 text = clean_human(content)
                 if text:
                     if is_pipeline(text):
-                        skip = meta["skip"] = "session du pipeline memex"
+                        skip = meta["skip"] = "memex pipeline session"
                     events.append(("human", stamp, text))
             elif row["role"] == "assistant":
                 if content.strip():

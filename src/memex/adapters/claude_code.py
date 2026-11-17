@@ -1,7 +1,7 @@
-"""Transcripts Claude Code : ~/.claude/projects/<projet>/<session>.jsonl
+"""Claude Code transcripts: ~/.claude/projects/<project>/<session>.jsonl
 
-Lecture incrémentale par octets. Les sous-agents (dossier `subagents/`) et les
-lignes techniques (requêtes API, instantanés) sont ignorés.
+Incremental reading, by byte offset. Sub-agents (`subagents/` folder) and
+technical lines (API requests, snapshots) are skipped.
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from ..util import parse_ts
 from . import Adapter, SessionRef, clean_human, is_pipeline, mark_final
 
 _EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
-# Lignes volumineuses et sans paroles : écartées sans même les décoder. Tout type inconnu est lu.
+# Bulky lines that carry no words: dropped without even decoding them. Any unknown type is read.
 _TECHNICAL = tuple(b'{"type":"' + name + b'"' for name in (
     b"api-request", b"api-request-blob", b"api-request-shape", b"file-history-snapshot", b"mode",
     b"permission-mode", b"session-owner", b"atis-latch", b"last-prompt", b"tools-used", b"queue-operation",
@@ -49,7 +49,7 @@ class ClaudeCodeAdapter(Adapter):
             handle.seek(offset)
             for raw in handle:
                 if not raw.endswith(b"\n"):
-                    break  # ligne en cours d'écriture : on la reprendra au prochain passage
+                    break  # line still being written: we will pick it up on the next run
                 offset += len(raw)
                 if raw.startswith(_TECHNICAL):
                     continue
@@ -88,7 +88,7 @@ class ClaudeCodeAdapter(Adapter):
                             if block.get("name") in _EDIT_TOOLS and isinstance(target, str) and target not in files:
                                 files.append(target)
                     continue
-                # ── tour « utilisateur » : parole humaine, résultat d'outil ou injection ──
+                # ── "user" turn: human words, tool result or injection ──
                 texts = []
                 if isinstance(content, str):
                     texts.append(content)
@@ -101,7 +101,7 @@ class ClaudeCodeAdapter(Adapter):
                         elif block.get("type") == "text":
                             texts.append(block.get("text") or "")
                         elif block.get("type") == "image":
-                            texts.append("[image jointe]")
+                            texts.append("[image attached]")
                 if entry.get("isMeta") or entry.get("isCompactSummary") or entry.get("isVisibleInTranscriptOnly"):
                     continue
                 origin = entry.get("origin")
@@ -110,10 +110,10 @@ class ClaudeCodeAdapter(Adapter):
                 if entry.get("promptSource") == "system" or entry.get("toolUseResult"):
                     continue
                 text = clean_human("\n".join(texts))
-                if not text or text == "[image jointe]":
+                if not text or text == "[image attached]":
                     continue
                 if is_pipeline(text):
-                    skip = "session du pipeline memex"
+                    skip = "memex pipeline session"
                 events.append(("human", stamp, text))
         meta["files"], meta["links"] = files[-60:], links[-20:]
         return Chunk(messages=mark_final(events), meta=meta, cursor=offset, skip=skip)

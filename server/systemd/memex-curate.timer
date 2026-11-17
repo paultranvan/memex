@@ -1,0 +1,10 @@
+[Unit]
+Description=memex: weekly curator
+
+[Timer]
+OnCalendar=@CURATE_CALENDAR@
+Persistent=true
+Unit=memex-curate.service
+
+[Install]
+WantedBy=timers.target

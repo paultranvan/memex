@@ -1,8 +1,8 @@
-"""Le balayeur : transforme les sessions locales en condensés, dans la boîte d'envoi.
+"""The sweeper: turns local sessions into segments, in the outbox.
 
-Sans LLM, incrémental (un curseur par session), idempotent. Une session n'est
-balayée que si elle est inactive depuis MEMEX_IDLE_MINUTES, ou si on le force
-(fin de session signalée par un hook).
+No LLM, incremental (one cursor per session), idempotent. A session is only
+swept once it has been idle for MEMEX_IDLE_MINUTES, or when forced (end of
+session signalled by a hook).
 """
 from __future__ import annotations
 
@@ -37,14 +37,14 @@ class SweepReport:
 
     def summary(self) -> str:
         if self.busy:
-            return "balayage déjà en cours"
-        parts = [f"{len(self.written)} condensé(s) écrit(s)", f"{self.sessions} session(s) vue(s)"]
+            return "sweep already running"
+        parts = [f"{len(self.written)} segment(s) written", f"{self.sessions} session(s) seen"]
         if self.active:
-            parts.append(f"{self.active} encore active(s)")
+            parts.append(f"{self.active} still active")
         for reason, count in sorted(self.excluded.items()):
-            parts.append(f"{count} ignorée(s) : {reason}")
+            parts.append(f"{count} skipped: {reason}")
         if self.redactions:
-            parts.append(f"{self.redactions} secret(s) masqué(s)")
+            parts.append(f"{self.redactions} secret(s) redacted")
         return ", ".join(parts)
 
 
@@ -63,7 +63,7 @@ def _relative(path: str, root: str) -> str:
 
 
 def _scratch(path: str) -> bool:
-    """Fichiers de brouillon des agents : sans intérêt pour la mémoire d'un projet."""
+    """The agents' scratch files: of no interest for a project's memory."""
     return "/scratchpad/" in path or path.startswith(("/tmp/claude-", "/private/tmp/claude-"))
 
 
@@ -88,7 +88,7 @@ class Sweeper:
         self.redactor = Redactor(config.list("MEMEX_REDACT_EXTRA"), config.bool("MEMEX_REDACT_EMAILS"))
 
     def run(self, force: Iterable[str] = (), force_all: bool = False, dry_run: bool = False, discard: bool = False) -> SweepReport:
-        """`discard` : marque tout l'existant comme déjà vu, sans rien produire (pas de reprise d'historique)."""
+        """`discard`: marks everything that exists as already seen, without producing anything (no backfill)."""
         report = SweepReport()
         try:
             with file_lock(self.config.data_dir / "sweep.lock"):
@@ -109,7 +109,7 @@ class Sweeper:
             for ref in adapter.discover():
                 entry = sessions.get(ref.key) or {"cursor": 0, "seq": 0, "meta": {}}
                 if ref.size < int(entry.get("cursor") or 0) and ref.path.suffix == ".jsonl":
-                    # Fichier réécrit plus court (rotation, troncature) : le curseur ne veut plus rien dire.
+                    # File rewritten shorter (rotation, truncation): the cursor no longer means anything.
                     entry["cursor"] = 0
                 if ref.size <= int(entry.get("cursor") or 0):
                     continue
@@ -126,13 +126,13 @@ class Sweeper:
                 if chunk.skip:
                     entry["skip"] = chunk.skip
                 if marker and any(marker in m.text for m in chunk.messages if m.role == "user"):
-                    entry["skip"] = f"marqueur {marker}"
+                    entry["skip"] = f"marker {marker}"
                 if entry.get("skip"):
                     report.exclude(entry["skip"])
                     continue
                 if discard:
                     entry["meta"]["files"], entry["meta"]["links"] = [], []
-                    report.exclude("historique laissé de côté")
+                    report.exclude("history left aside")
                     continue
                 cwd =str(chunk.meta.get("cwd") or "")
                 project = self.resolver.resolve(cwd)
@@ -168,7 +168,7 @@ class Sweeper:
                     if not dry_run:
                         atomic_write(config.outbox / segment.filename, segment.render(), 0o600)
                     report.written.append(segment.filename)
-                # Les fichiers touchés sont rattachés au condensé qui vient d'être écrit.
+                # The files touched belong to the segment that has just been written.
                 entry["meta"]["files"], entry["meta"]["links"] = [], []
         if not dry_run:
             write_json(config.host_state, state)
@@ -190,7 +190,7 @@ class Sweeper:
 
 
 def write_note(config: Config, text: str, cwd: Optional[str] = None, title: str = "") -> Path:
-    """Capture explicite : une note déposée directement dans la boîte d'envoi."""
+    """Explicit capture: a note dropped straight into the outbox."""
     redactor = Redactor(config.list("MEMEX_REDACT_EXTRA"), config.bool("MEMEX_REDACT_EMAILS"))
     cwd = cwd or os.getcwd()
     project = ProjectResolver().resolve(cwd)
@@ -198,7 +198,7 @@ def write_note(config: Config, text: str, cwd: Optional[str] = None, title: str 
     body = redactor(text.strip())
     segment = Segment(
         source="note", device=config.device, session=uuid.uuid4().hex, seq=1,
-        messages=[Message("user", "Note à consigner dans le wiki (capture explicite) :\n\n" + body, stamp)],
+        messages=[Message("user", "Note to record in the wiki (explicit capture):\n\n" + body, stamp)],
         started=stamp, ended=stamp,
         project=project.slug if project else "", project_name=project.name if project else "",
         project_remote=project.remote if project else "", cwd=tilde(cwd),

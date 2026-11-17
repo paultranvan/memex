@@ -1,13 +1,13 @@
-"""Synchronisation entre le dépôt du wiki et le dossier du vault Obsidian.
+"""Synchronisation between the wiki repository and the Obsidian vault folder.
 
-Le vault est un dossier ordinaire, sans rien de git dedans : c'est lui que le
-client LiveSync synchronise avec tes appareils. Un manifeste garde l'empreinte
-de chaque fichier au dernier échange, ce qui permet de savoir qui a changé quoi :
+The vault is an ordinary folder with nothing of git in it: it is the one the
+LiveSync client synchronises with your devices. A manifest keeps the digest
+of each file as of the last exchange, which tells who changed what:
 
-  - le vault diffère du manifeste  → modification humaine, à importer dans le wiki ;
-  - le wiki diffère du vault       → modification d'agent, à exporter vers le vault.
+  - the vault differs from the manifest  → human edit, to import into the wiki;
+  - the wiki differs from the vault      → agent edit, to export to the vault.
 
-En cas de modification des deux côtés, l'humain gagne.
+When both sides changed, the human wins.
 """
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ class Vault:
         return data if isinstance(data, dict) else None
 
     def import_changes(self) -> list[str]:
-        """Vault → wiki. Renvoie les chemins modifiés dans le dépôt (à commiter par l'appelant)."""
+        """Vault → wiki. Returns the paths changed in the repository (for the caller to commit)."""
         if not self.enabled:
             return []
         assert self.dir is not None
@@ -59,7 +59,7 @@ class Vault:
         vault_now = scan(self.dir)
         changed: list[str] = []
         if manifest is None:
-            # Premier échange (ou manifeste perdu) : le wiki fait foi, on n'importe que ce qu'il n'a pas.
+            # First exchange (or lost manifest): the wiki is authoritative, only what it lacks is imported.
             wiki_now = scan(self.wiki)
             for relative in vault_now:
                 if relative not in wiki_now and relative not in MANAGED_FILES:
@@ -83,7 +83,7 @@ class Vault:
         return changed
 
     def export(self) -> int:
-        """Wiki → vault. Renvoie le nombre de fichiers écrits ou supprimés."""
+        """Wiki → vault. Returns the number of files written or deleted."""
         if not self.enabled:
             return 0
         assert self.dir is not None
@@ -101,7 +101,7 @@ class Vault:
                 continue
             human_edit = current is not None and not bootstrap and previous.get(relative) != current
             if human_edit and relative not in MANAGED_FILES:
-                manifest[relative] = previous.get(relative, "")  # sera importé au prochain passage
+                manifest[relative] = previous.get(relative, "")  # will be imported on the next run
                 continue
             atomic_write(self.dir / relative, (self.wiki / relative).read_bytes())
             manifest[relative] = digest
@@ -113,7 +113,7 @@ class Vault:
                 (self.dir / relative).unlink(missing_ok=True)
                 touched += 1
             else:
-                manifest[relative] = digest  # modifié par l'humain après suppression côté wiki : il gagne
+                manifest[relative] = digest  # edited by the human after deletion on the wiki side: the human wins
         self._prune_empty_dirs()
         write_json(self.manifest_path, {k: v for k, v in manifest.items() if v})
         return touched

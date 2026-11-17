@@ -1,7 +1,7 @@
-"""En-têtes YAML des pages : lecture tolérante d'un sous-ensemble, écriture compatible Obsidian.
+"""YAML front matter of the pages: lenient reading of a subset, Obsidian-compatible writing.
 
-Pas de dépendance PyYAML. On couvre ce que le wiki utilise : scalaires, listes en
-ligne `[a, b]` et listes en bloc `- a`. Tout le reste est conservé comme texte.
+No PyYAML dependency. We cover what the wiki uses: scalars, inline lists
+`[a, b]` and block lists `- a`. Everything else is kept as text.
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ _RESERVED = {"true", "false", "null", "yes", "no", "on", "off", "~", ""}
 
 
 def split(text: str) -> tuple[str, str]:
-    """Sépare l'en-tête brut (sans les `---`) du corps. En-tête vide si absent."""
+    """Separates the raw header (without the `---`) from the body. Empty header if there is none."""
     if not text.startswith("---"):
         return "", text
     lines = text.split("\n")
@@ -152,11 +152,11 @@ _TOP_KEY = re.compile(r"^([^\s#-][^:]*?)\s*:(\s|$)")
 
 
 def set_keys(text: str, updates: dict[str, Any]) -> str:
-    """Pose ou remplace des champs de l'en-tête sans réécrire les autres lignes.
+    """Sets or replaces header fields without rewriting the other lines.
 
-    L'en-tête d'une page peut venir d'Obsidian ou d'un modèle et contenir du YAML
-    que ce module ne sait pas relire fidèlement (blocs imbriqués, commentaires) :
-    on n'y touche donc pas, on ne remplace que les champs demandés.
+    A page's header may come from Obsidian or from a template and hold YAML that
+    this module cannot read back faithfully (nested blocks, comments): so we
+    leave it alone and only replace the requested fields.
     """
     if not updates:
         return text

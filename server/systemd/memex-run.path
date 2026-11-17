@@ -1,5 +1,5 @@
 [Unit]
-Description=memex : réveil à l'arrivée de nouveaux condensés
+Description=memex: wake-up when new segments arrive
 
 [Path]
 PathChanged=@MEMEX_HOME@/raw/trigger

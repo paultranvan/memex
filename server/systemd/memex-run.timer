@@ -1,5 +1,5 @@
 [Unit]
-Description=memex : passage de sécurité (modifications faites dans Obsidian, discussions Hermes)
+Description=memex: safety-net run (edits made in Obsidian, Hermes conversations)
 
 [Timer]
 OnBootSec=3min

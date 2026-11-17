@@ -1,11 +1,11 @@
-"""La porte du serveur : la seule chose qu'une clé SSH d'hôte a le droit de lancer.
+"""The server's gate: the only thing a host's SSH key is allowed to run.
 
-Installée comme commande forcée dans `authorized_keys` :
+Installed as a forced command in `authorized_keys`:
 
-    restrict,command="memex-gate --forced --device portable" ssh-ed25519 AAAA…
+    restrict,command="memex-gate --forced --device laptop" ssh-ed25519 AAAA…
 
-Elle n'accepte que : déposer des condensés dans la boîte du device, cloner le
-wiki (et le dépôt de l'outil) en lecture, récupérer la dernière sauvegarde.
+It only accepts: dropping segments into the device's inbox, cloning the wiki
+(and the tool's repository) read-only, fetching the latest backup.
 """
 from __future__ import annotations
 
@@ -46,18 +46,18 @@ def upload(config: Config, device: str, stream) -> dict:
             count += 1
             name = member.name
             if count > MAX_FILES:
-                result["rejected"][name] = "trop de fichiers dans un envoi"
+                result["rejected"][name] = "too many files in one upload"
                 continue
             if not member.isreg() or "/" in name or "\\" in name or not valid_name(name):
-                result["rejected"][name] = "nom ou type de fichier refusé"
+                result["rejected"][name] = "file name or type rejected"
                 continue
             if member.size > MAX_FILE:
-                result["rejected"][name] = "fichier trop volumineux"
+                result["rejected"][name] = "file too large"
                 continue
             handle = archive.extractfile(member)
             data = handle.read() if handle else b""
             if not data.startswith(b"---\n"):
-                result["rejected"][name] = "ce n'est pas un condensé"
+                result["rejected"][name] = "not a segment"
                 continue
             known = [inbox / name, archive_path(config, device, name), config.quarantine / device / name]
             if any(path.exists() for path in known):
@@ -116,18 +116,18 @@ def main(argv: list[str], config: Optional[Config] = None) -> int:
         except ValueError:
             words = []
         if not words:
-            print("memex-gate : accès limité à memex (pas de shell).", file=sys.stderr)
+            print("memex-gate: access limited to memex (no shell)", file=sys.stderr)
             return 1
         if words[0] == "git-upload-pack" and len(words) == 2:
             repo = _allowed_repo(config, words[1])
             if not repo:
-                print("memex-gate : dépôt refusé.", file=sys.stderr)
+                print("memex-gate: repository rejected", file=sys.stderr)
                 return 1
             os.execvp("git-upload-pack", ["git-upload-pack", str(repo)])
         if words[0] != "memex-gate":
-            print("memex-gate : commande refusée.", file=sys.stderr)
+            print("memex-gate: command rejected", file=sys.stderr)
             return 1
-        # Le device vient de la clé (authorized_keys), jamais de ce que dit le client.
+        # The device comes from the key (authorized_keys), never from what the client says.
         rest, skip = [], False
         for word in words[1:]:
             if skip:
@@ -144,21 +144,21 @@ def main(argv: list[str], config: Optional[Config] = None) -> int:
         return backup_latest(config, sys.stdout.buffer)
     if verb == "upload":
         if not _DEVICE.match(device or ""):
-            print("memex-gate : nom de device manquant ou invalide.", file=sys.stderr)
+            print("memex-gate: missing or invalid device name", file=sys.stderr)
             return 2
         try:
             result = upload(config, device, sys.stdin.buffer)
         except (tarfile.TarError, OSError) as exc:
-            print(f"memex-gate : envoi illisible ({exc}).", file=sys.stderr)
+            print(f"memex-gate: unreadable upload ({exc})", file=sys.stderr)
             return 1
         print(json.dumps(result, ensure_ascii=False))
         return 0
-    print("memex-gate : verbes acceptés : upload, ping, backup-latest.", file=sys.stderr)
+    print("memex-gate: accepted verbs: upload, ping, backup-latest", file=sys.stderr)
     return 2
 
 
 def pack(paths: list[Path]) -> bytes:
-    """Côté hôte : fabrique l'archive envoyée à `upload`."""
+    """Host side: builds the archive sent to `upload`."""
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w") as archive:
         for path in paths:

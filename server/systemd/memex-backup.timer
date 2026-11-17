@@ -1,5 +1,5 @@
 [Unit]
-Description=memex : sauvegarde quotidienne
+Description=memex: daily backup
 
 [Timer]
 OnCalendar=*-*-* 03:30:00

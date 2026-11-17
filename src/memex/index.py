@@ -1,15 +1,11 @@
-"""Index du wiki, régénéré par le code à chaque passage (jamais par un agent)."""
+"""Wiki index, rebuilt by the code on every run (never by an agent)."""
 from __future__ import annotations
 
 from pathlib import Path
 
-from .pages import CONCEPTS, PROJECTS, TOPICS, Page, content_pages, wikilink
+from . import i18n
+from .pages import Page, content_pages, wikilink
 from .util import atomic_write
-
-HEADER = (
-    "---\ntype: meta\ntitre: Index\n---\n\n# Index du wiki\n\n"
-    "> Généré automatiquement par memex à partir des en-têtes des pages. Ne pas modifier à la main.\n"
-)
 
 
 def _line(page: Page, indent: str = "") -> str:
@@ -17,58 +13,65 @@ def _line(page: Page, indent: str = "") -> str:
     return f"{indent}- {wikilink(page.path, page.title)}{summary}"
 
 
-def main_page(dossier: str, pages: dict[str, Page]) -> Page | None:
-    name = dossier.split("/")[-1]
-    exact = pages.get(f"{dossier}/{name}.md") or pages.get(f"{dossier}.md")
+def main_page(folder: str, pages: dict[str, Page]) -> Page | None:
+    name = folder.split("/")[-1]
+    exact = pages.get(f"{folder}/{name}.md") or pages.get(f"{folder}.md")
     if exact:
         return exact
-    roots = [p for path, p in sorted(pages.items()) if p.dossier == dossier and not p.is_decision and path.count("/") <= 2]
+    roots = [
+        p for path, p in sorted(pages.items())
+        if p.folder == folder and not p.is_decision and path.count("/") <= 2
+    ]
     return roots[0] if roots else None
 
 
-def dossiers(pages: dict[str, Page], top: str) -> list[str]:
-    return sorted({p.dossier for p in pages.values() if p.path.split("/")[0] == top and p.dossier}, key=str.lower)
+def folders(pages: dict[str, Page], top: str) -> list[str]:
+    return sorted({p.folder for p in pages.values() if p.path.split("/")[0] == top and p.folder}, key=str.lower)
 
 
 def build(pages: dict[str, Page]) -> str:
+    loc = i18n.current()
+    active_status = loc.status("active")
     pages = content_pages(pages)
-    out = [HEADER]
-    for top, label in ((PROJECTS, "Projets"), (TOPICS, "Sujets")):
+    out = [loc.t("index.header")]
+    for top, label in ((loc.projects, loc.t("index.projects")), (loc.topics, loc.t("index.topics"))):
         out.append(f"\n## {label}\n")
-        names = dossiers(pages, top)
+        names = folders(pages, top)
         if not names:
-            out.append("_(aucun pour l'instant)_")
-        for dossier in names:
-            members = [p for _, p in sorted(pages.items()) if p.dossier == dossier]
-            main = main_page(dossier, pages)
+            out.append(loc.t("index.none"))
+        for folder in names:
+            members = [p for _, p in sorted(pages.items()) if p.folder == folder]
+            main = main_page(folder, pages)
             decisions = [p for p in members if p.is_decision]
-            active = sum(1 for p in decisions if str(p.meta.get("statut", "active")).lower().startswith("activ"))
-            tail = f" · {len(decisions)} décision(s), dont {active} active(s)" if decisions else ""
+            active = sum(1 for p in decisions if str(p.meta.get(loc.k_status, active_status)).lower() == active_status)
+            tail = loc.t("index.decisions", count=len(decisions), active=active) if decisions else ""
             if main:
                 out.append(_line(main) + tail)
             else:
-                out.append(f"- {dossier.split('/')[-1]}{tail}")
+                out.append(f"- {folder.split('/')[-1]}{tail}")
             for page in members:
                 if page is not main and not page.is_decision:
                     out.append(_line(page, "  "))
-    out.append("\n## Concepts\n")
-    concepts = [p for _, p in sorted(pages.items()) if p.path.split("/")[0] == CONCEPTS]
-    out.extend(_line(p) for p in concepts) if concepts else out.append("_(aucun pour l'instant)_")
+    out.append(f"\n## {loc.t('index.concepts')}\n")
+    concepts = [p for _, p in sorted(pages.items()) if p.path.split("/")[0] == loc.concepts]
+    out.extend(_line(p) for p in concepts) if concepts else out.append(loc.t("index.none"))
     decisions = sorted(
         (p for p in pages.values() if p.is_decision),
-        key=lambda p: (str(p.meta.get("date") or ""), p.path), reverse=True,
+        key=lambda p: (str(p.meta.get(i18n.K_DATE) or ""), p.path), reverse=True,
     )
     if decisions:
-        out.append("\n## Décisions récentes\n")
+        out.append(f"\n## {loc.t('index.recent')}\n")
         for page in decisions[:25]:
             status = str(p_status(page))
-            mark = "" if status.startswith("activ") else f" _({status})_"
-            out.append(f"- {page.meta.get('date') or '????-??-??'} — {wikilink(page.path, page.title)} · {page.dossier.split('/')[-1]}{mark}")
+            mark = "" if status == active_status else f" _({status})_"
+            date = page.meta.get(i18n.K_DATE) or "????-??-??"
+            out.append(f"- {date} — {wikilink(page.path, page.title)} · {page.folder.split('/')[-1]}{mark}")
     return "\n".join(out).rstrip() + "\n"
 
 
 def p_status(page: Page) -> str:
-    return str(page.meta.get("statut") or "active").lower()
+    loc = i18n.current()
+    return str(page.meta.get(loc.k_status) or loc.status("active")).lower()
 
 
 def write(root: Path, pages: dict[str, Page]) -> bool:
@@ -84,18 +87,20 @@ def write(root: Path, pages: dict[str, Page]) -> bool:
 
 
 def compact(pages: dict[str, Page], limit: int = 12000, long_page: int = 0) -> str:
-    """Liste courte des pages (chemin, titre, résumé) donnée aux agents pour s'orienter.
+    """Short list of the pages (path, title, summary) given to the agents to find their way around.
 
-    `long_page` : au-delà de cette taille, la page est signalée comme déjà longue.
+    `long_page`: above this size, the page is flagged as already long.
     """
+    loc = i18n.current()
     lines = []
     for path, page in sorted(content_pages(pages).items()):
         if page.is_decision:
             continue
-        size = f" [déjà longue : {len(page.body)} caractères]" if long_page and len(page.body) > long_page else ""
-        lines.append(f"- {path} — {page.title}{size}" + (f" : {page.summary}" if page.summary else ""))
-    for dossier in sorted({p.dossier for p in content_pages(pages).values() if p.is_decision}):
-        count = sum(1 for p in pages.values() if p.is_decision and p.dossier == dossier)
-        lines.append(f"- {dossier}/Décisions/ — {count} fiche(s) de décision")
-    text = "\n".join(lines) or "(le wiki est encore vide)"
-    return text if len(text) <= limit else text[:limit] + "\n… (liste tronquée : cherche dans les fichiers)"
+        size = loc.t("compact.long", count=len(page.body)) if long_page and len(page.body) > long_page else ""
+        summary = loc.t("compact.summary", summary=page.summary) if page.summary else ""
+        lines.append(f"- {path} — {page.title}{size}{summary}")
+    for folder in sorted({p.folder for p in content_pages(pages).values() if p.is_decision}):
+        count = sum(1 for p in pages.values() if p.is_decision and p.folder == folder)
+        lines.append(loc.t("compact.decisions", folder=folder, decisions=loc.decisions, count=count))
+    text = "\n".join(lines) or loc.t("compact.empty")
+    return text if len(text) <= limit else text[:limit] + loc.t("compact.truncated")

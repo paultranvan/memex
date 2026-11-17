@@ -1,8 +1,7 @@
-"""Le condensé : un extrait immuable de session, en markdown avec en-tête.
+"""The segment: an immutable excerpt of a session, in markdown with a header.
 
-Un condensé (« segment ») contient les messages échangés depuis le balayage
-précédent. Il n'est jamais modifié après écriture : la suite d'une session
-donne un nouveau segment, numéroté.
+A segment holds the messages exchanged since the previous sweep. It is never
+modified once written: the rest of a session yields a new, numbered segment.
 """
 from __future__ import annotations
 
@@ -15,17 +14,21 @@ from typing import Any, Optional
 from . import frontmatter
 from .util import UTC, iso, parse_ts
 
-FORMAT = "memex/segment-1"
+FORMAT = "memex/segment-2"
+LEGACY_FORMAT = "memex/segment-1"
 _NAME = re.compile(r"^[A-Za-z0-9._-]{1,200}\.md$")
 _UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 def safe_token(value: Any, fallback: str = "x") -> str:
-    """Un identifiant venu d'un condensé (source, session, appareil) : jamais de `/` ni de `..`."""
+    """An identifier taken from a segment (source, session, device): never any `/` or `..`."""
     token = re.sub(r"\.{2,}", ".", _UNSAFE.sub("-", str(value or ""))).strip(".-")[:120]
     return token or fallback
-ROLE_LABEL = {"user": "Utilisateur", "assistant": "Assistant"}
-_HEADING = re.compile(r"^## (Utilisateur|Assistant)(?: — (.*))?$")
+ROLE_LABEL = {"user": "User", "assistant": "Assistant"}
+_HEADINGS = {
+    FORMAT: re.compile(r"^## (User|Assistant)(?: — (.*))?$"),
+    LEGACY_FORMAT: re.compile(r"^## (Utilisateur|Assistant)(?: — (.*))?$"),
+}
 
 
 @dataclass
@@ -38,7 +41,7 @@ class Message:
 
 @dataclass
 class Chunk:
-    """Ce qu'un adaptateur a lu depuis le dernier curseur."""
+    """What an adapter has read since the last cursor."""
 
     messages: list[Message] = field(default_factory=list)
     meta: dict[str, Any] = field(default_factory=dict)
@@ -115,13 +118,13 @@ class Segment:
         return frontmatter.dump(self.header(), "\n".join(parts))
 
     def transcript(self) -> str:
-        """Le corps seul, tel qu'on le donne à lire au modèle."""
+        """The body alone, as it is given to the model to read."""
         return frontmatter.split(self.render())[1]
 
 
 def _escape(text: str) -> str:
-    """Un message ne doit pas pouvoir imiter un titre de tour de parole."""
-    return re.sub(r"(?m)^## (Utilisateur|Assistant)\b", r"\\## \1", text)
+    """A message must not be able to imitate a turn heading."""
+    return re.sub(r"(?m)^## (User|Utilisateur|Assistant)\b", r"\\## \1", text)
 
 
 def valid_name(name: str) -> bool:
@@ -131,8 +134,9 @@ def valid_name(name: str) -> bool:
 def load(path: Path) -> Segment:
     text = Path(path).read_text(encoding="utf-8")
     head, body = frontmatter.parse(text)
-    if head.get("format") != FORMAT:
-        raise ValueError(f"{path.name} : format de condensé inconnu ({head.get('format')!r})")
+    heading = _HEADINGS.get(str(head.get("format")))
+    if heading is None:
+        raise ValueError(f"{path.name}: unknown segment format ({head.get('format')!r})")
     messages: list[Message] = []
     role, stamp, lines = None, None, []
 
@@ -141,19 +145,19 @@ def load(path: Path) -> Segment:
             messages.append(Message(role=role, text="\n".join(lines).strip(), ts=parse_ts(stamp)))
 
     for line in body.split("\n"):
-        match = _HEADING.match(line)
+        match = heading.match(line)
         if match:
             flush()
-            role = "user" if match.group(1) == "Utilisateur" else "assistant"
+            role = "assistant" if match.group(1) == "Assistant" else "user"
             stamp, lines = match.group(2), []
         elif role:
             lines.append(line)
     flush()
     started = parse_ts(head.get("started")) or dt.datetime.fromtimestamp(Path(path).stat().st_mtime, UTC)
     return Segment(
-        source=safe_token(head.get("source"), "inconnu"),
-        device=safe_token(head.get("device"), "inconnu"),
-        session=safe_token(head.get("session"), "inconnu"),
+        source=safe_token(head.get("source"), "unknown"),
+        device=safe_token(head.get("device"), "unknown"),
+        session=safe_token(head.get("session"), "unknown"),
         seq=int(head.get("seq") or 1),
         messages=messages,
         started=started,

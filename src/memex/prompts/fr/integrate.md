@@ -10,12 +10,12 @@ Tu es l'archiviste d'un wiki personnel en markdown, lu dans Obsidian. Le répert
 
 ## Où ranger
 
-{{dossier}}
+{{folder}}
 
 ## Éléments à intégrer
 
 ```json
-{{elements}}
+{{items}}
 ```
 
 ## Pages existantes
@@ -27,11 +27,11 @@ Tu es l'archiviste d'un wiki personnel en markdown, lu dans Obsidian. Le répert
 1. Lis la page vivante du dossier si elle existe, et la liste de ses fiches de décision. Pour chaque élément, cherche par mots-clés si une page en parle déjà : dans ce cas, complète-la au lieu d'en créer une.
 2. Intègre chaque élément là où les conventions le prévoient :
    - `decision` : crée une fiche dans `<dossier>/Décisions/` nommée `<date de la session> <titre court>.md` (sans `:` ni autre signe spécial dans le nom), puis mets à jour la page vivante (section « Décisions », et « Grandes lignes » si le choix est structurant). Si elle remplace une décision existante, n'en touche pas le texte : passe seulement son en-tête à `statut: remplacee` et renseigne `remplacee_par`. Un choix mineur ne mérite pas de fiche : une ligne dans la page vivante.
-   - `piste_abandonnee` : une ligne dans « Pistes écartées », avec la raison.
-   - `probleme` : dans « Problèmes connus », avec la cause et la solution.
-   - `etat` : mets à jour « En bref », « Grandes lignes » ou « Questions ouvertes ». Réécris ce qui n'est plus vrai au lieu d'ajouter une phrase contradictoire.
-   - `fait`, `preference` : dans la page du dossier concerné, ou dans `Sujets/Environnement/` et `Sujets/Préférences de travail/` s'ils valent partout.
-   - `synthese` : dans la page vivante si c'est court, sinon dans une page complémentaire du dossier, liée depuis la page vivante.
+   - `dead_end` : une ligne dans « Pistes écartées », avec la raison.
+   - `problem` : dans « Problèmes connus », avec la cause et la solution.
+   - `state` : mets à jour « En bref », « Grandes lignes » ou « Questions ouvertes ». Réécris ce qui n'est plus vrai au lieu d'ajouter une phrase contradictoire.
+   - `fact`, `preference` : dans la page du dossier concerné, ou dans `Sujets/Environnement/` et `Sujets/Préférences de travail/` s'ils valent partout.
+   - `synthesis` : dans la page vivante si c'est court, sinon dans une page complémentaire du dossier, liée depuis la page vivante.
 3. Si la page vivante du dossier n'existe pas, crée-la avec son en-tête complet (`type`, `titre`, `resume`, `entites`) et les sections utiles.
 4. Tiens à jour le champ `resume` des pages que tu modifies, et leur champ `entites`.
 5. Ajoute les liens `[[Dossier/Page|libellé]]` vers les pages que tu cites.
@@ -42,7 +42,7 @@ Tu es l'archiviste d'un wiki personnel en markdown, lu dans Obsidian. Le répert
 Quand tu as fini, écris à la racine le fichier `.memex-result.json` :
 
 ```json
-{"dossier": "Projets/Nom ou Sujets/Nom", "resume": "Une phrase sur ce que tu as changé.", "ignores": ["titre d'un élément laissé de côté : pourquoi"]}
+{"folder": "Projets/Nom ou Sujets/Nom", "summary": "Une phrase sur ce que tu as changé.", "skipped": ["titre d'un élément laissé de côté : pourquoi"]}
 ```
 
 ## Interdits

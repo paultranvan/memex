@@ -1,7 +1,7 @@
-"""Branchement de memex sur Claude Code et Codex : hooks et pointeur vers le wiki.
+"""Wiring memex into Claude Code and Codex: hooks and a pointer to the wiki.
 
-Tout est idempotent et réversible : les entrées ajoutées se reconnaissent à la
-commande `memex hook`, et le pointeur tient entre deux balises.
+Everything is idempotent and reversible: the entries added are recognised by
+the `memex hook` command, and the pointer sits between two markers.
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from .config import Config
 from .util import atomic_write, tilde
 
 MARK = "memex hook"
-BEGIN = "<!-- memex:begin (bloc géré par memex : ne pas modifier entre ces balises) -->"
+BEGIN = "<!-- memex:begin (block managed by memex: do not edit between these markers) -->"
 END = "<!-- memex:end -->"
 _BLOCK = re.compile(r"\n*<!-- memex:begin.*?<!-- memex:end -->\n*", re.S)
 
@@ -25,14 +25,18 @@ _BLOCK = re.compile(r"\n*<!-- memex:begin.*?<!-- memex:end -->\n*", re.S)
 def pointer(config: Config) -> str:
     wiki = tilde(config.wiki_clone)
     return f"""{BEGIN}
-## Mémoire partagée (memex)
+## Shared memory (memex)
 
-Une base de connaissance tirée de mes sessions passées, tous agents et toutes machines confondus, se trouve dans `{wiki}/`. Elle est en lecture seule.
+A knowledge base built from my past sessions, across all agents and all machines, lives in `{wiki}/`. \
+It is read-only.
 
-- Avant de proposer un choix structurant, ou quand je demande pourquoi quelque chose a été décidé, consulte-la : commence par `{wiki}/index.md`, cherche ensuite dans les fichiers, puis suis les liens `[[…]]`.
-- Chaque projet a une page vivante `Projets/<Nom>/<Nom>.md` et des fiches dans `Projets/<Nom>/Décisions/`. Les sujets hors code sont dans `Sujets/`, les notions communes dans `Concepts/`.
-- N'y écris jamais. Ce que nous décidons ici y est reporté automatiquement après la session. Si je dis « note cette décision », confirme simplement qu'elle sera consignée.
-- Pour consigner quelque chose tout de suite, hors de toute session : `memex note "texte"`.
+- Before proposing a structural choice, or when I ask why something was decided, consult it: \
+start with `{wiki}/index.md`, then search the files and follow the `[[…]]` links.
+- Each project and each topic has a living page and dated decision records; \
+cross-cutting notions have their own pages. All of them are listed in `index.md`.
+- Never write there. What we decide here is recorded there automatically after the session. \
+If I say "note this decision", just confirm that it will be recorded.
+- To record something right away, outside any session: `memex note "text"`.
 {END}
 """
 
@@ -43,7 +47,7 @@ def _backup(path: Path) -> None:
 
 
 def set_pointer(path: Path, block: Optional[str]) -> bool:
-    """Pose (ou retire, si `block` est None) le bloc memex dans un fichier d'instructions."""
+    """Sets (or removes, if `block` is None) the memex block in an instructions file."""
     try:
         current = path.read_text(encoding="utf-8")
     except OSError:
@@ -99,10 +103,10 @@ def claude(config: Config, binary: str, install: bool = True) -> list[str]:
     done = []
     folder = claude_dir()
     if not folder.is_dir():
-        return ["Claude Code : dossier de configuration absent, rien à faire"]
+        return ["Claude Code: no configuration folder, nothing to do"]
     settings_path = folder / "settings.json"
     if settings_path.exists() and not _load_json(settings_path):
-        return [f"Claude Code : {settings_path} illisible, laissé intact"]
+        return [f"Claude Code: {settings_path} is unreadable, left untouched"]
     settings = _load_json(settings_path)
     hooks = settings.setdefault("hooks", {})
     changed = _set_hooks(hooks, {
@@ -127,29 +131,31 @@ def claude(config: Config, binary: str, install: bool = True) -> list[str]:
     if changed:
         _backup(settings_path)
         atomic_write(settings_path, json.dumps(settings, ensure_ascii=False, indent=2) + "\n")
-        done.append("Claude Code : hooks SessionStart/SessionEnd " + ("installés" if install else "retirés"))
+        done.append("Claude Code: SessionStart/SessionEnd hooks " + ("installed" if install else "removed"))
     if set_pointer(folder / "CLAUDE.md", pointer(config) if install else None):
-        done.append("Claude Code : pointeur " + ("ajouté à" if install else "retiré de") + " CLAUDE.md")
-    return done or ["Claude Code : déjà à jour"]
+        done.append("Claude Code: pointer " + ("added to" if install else "removed from") + " CLAUDE.md")
+    return done or ["Claude Code: already up to date"]
 
 
 def codex(config: Config, binary: str, install: bool = True) -> list[str]:
     done = []
     folder = codex_dir()
     if not folder.is_dir():
-        return ["Codex : dossier de configuration absent, rien à faire"]
+        return ["Codex: no configuration folder, nothing to do"]
     hooks_path = folder / "hooks.json"
     if hooks_path.exists() and not _load_json(hooks_path):
-        return [f"Codex : {hooks_path} illisible, laissé intact"]
+        return [f"Codex: {hooks_path} is unreadable, left untouched"]
     data = _load_json(hooks_path)
     hooks = data.setdefault("hooks", {})
     if _set_hooks(hooks, {"SessionStart": f"{binary} hook session-start" if install else None}):
         _backup(hooks_path)
         atomic_write(hooks_path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
-        done.append("Codex : hook SessionStart " + ("installé (Codex demandera de l'approuver au prochain lancement)" if install else "retiré"))
+        done.append("Codex: SessionStart hook " + (
+            "installed (Codex will ask you to approve it the next time it starts)" if install else "removed"
+        ))
     if set_pointer(folder / "AGENTS.md", pointer(config) if install else None):
-        done.append("Codex : pointeur " + ("ajouté à" if install else "retiré de") + " AGENTS.md")
-    return done or ["Codex : déjà à jour"]
+        done.append("Codex: pointer " + ("added to" if install else "removed from") + " AGENTS.md")
+    return done or ["Codex: already up to date"]
 
 
 def status(config: Config) -> dict[str, bool]:
@@ -167,9 +173,9 @@ def status(config: Config) -> dict[str, bool]:
 
     return {
         "claude_hooks": has(claude_dir() / "settings.json"),
-        "claude_pointeur": pointed(claude_dir() / "CLAUDE.md"),
+        "claude_pointer": pointed(claude_dir() / "CLAUDE.md"),
         "codex_hooks": has(codex_dir() / "hooks.json"),
-        "codex_pointeur": pointed(codex_dir() / "AGENTS.md"),
+        "codex_pointer": pointed(codex_dir() / "AGENTS.md"),
     }
 
 

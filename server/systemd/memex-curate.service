@@ -1,5 +1,5 @@
 [Unit]
-Description=memex : passage du vérificateur (propose une revue)
+Description=memex: curator run (proposes a review)
 After=network-online.target
 
 [Service]
@@ -9,7 +9,7 @@ Group=@MEMEX_USER@
 WorkingDirectory=@MEMEX_HOME@
 Environment=HOME=@MEMEX_HOME@
 Environment=PATH=@MEMEX_HOME@/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=@MEMEX_BIN@ server verif
+ExecStart=@MEMEX_BIN@ server curate
 Nice=10
 TimeoutStartSec=3600
 SuccessExitStatus=1

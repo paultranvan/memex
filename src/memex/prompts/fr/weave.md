@@ -10,9 +10,9 @@ Tu es le tisseur d'un wiki personnel en markdown, lu dans Obsidian. Le répertoi
 {{report}}
 ```
 
-- `mentions_sans_lien` : la page cite le titre d'une autre page sans lien vers elle.
-- `concepts_candidats` : un outil, une technique ou un thème cité dans plusieurs dossiers, sans page à lui.
-- `liens_casses` : un lien qui ne mène nulle part.
+- `unlinked_mentions` : la page cite le titre d'une autre page sans lien vers elle.
+- `concept_candidates` : un outil, une technique ou un thème cité dans plusieurs dossiers, sans page à lui.
+- `broken_links` : un lien qui ne mène nulle part.
 
 ## Pages existantes
 

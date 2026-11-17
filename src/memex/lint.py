@@ -1,7 +1,7 @@
-"""Contrôles déterministes du wiki : structure, liens, et pistes pour le tisseur.
+"""Deterministic checks of the wiki: structure, links, and leads for the weaver.
 
-Aucun LLM ici. Le rapport sert au vérificateur (ce qui cloche) et au tisseur
-(les liens manquants, les concepts qui mériteraient une page).
+No LLM here. The report serves the curator (what is wrong) and the weaver
+(missing links, concepts that would deserve a page).
 """
 from __future__ import annotations
 
@@ -9,11 +9,15 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import i18n
 from .index import main_page
-from .pages import CONCEPTS, LinkIndex, Page, _CODE, content_pages, iter_files, links, load_wiki, unlink
+from .pages import LinkIndex, Page, _CODE, content_pages, iter_files, links, load_wiki, unlink
 from .util import slugify
 
-_STOP = {"notes", "todo", "index", "projet", "sujet", "tests", "test", "docs", "divers", "général", "general"}
+_STOP = {
+    "notes", "todo", "index", "projet", "project", "sujet", "topic", "tests", "test", "docs", "divers", "misc",
+    "général", "general",
+}
 
 
 @dataclass
@@ -27,8 +31,8 @@ class LintReport:
 
     def as_dict(self) -> dict:
         return {
-            "problemes": self.problems, "liens_casses": self.broken, "orphelines": self.orphans,
-            "mentions_sans_lien": self.unlinked, "concepts_candidats": self.concepts, "stats": self.stats,
+            "problems": self.problems, "broken_links": self.broken, "orphans": self.orphans,
+            "unlinked_mentions": self.unlinked, "concept_candidates": self.concepts, "stats": self.stats,
         }
 
     @property
@@ -40,7 +44,8 @@ def _visible(body: str) -> str:
     return _CODE.sub(" ", body)
 
 
-def lint(root: Path, max_page_chars: int = 24000, min_dossiers: int = 2) -> LintReport:
+def lint(root: Path, max_page_chars: int = 24000, min_folders: int = 2) -> LintReport:
+    loc = i18n.current()
     report = LintReport()
     all_pages = load_wiki(Path(root))
     pages = content_pages(all_pages)
@@ -48,38 +53,38 @@ def lint(root: Path, max_page_chars: int = 24000, min_dossiers: int = 2) -> Lint
     inbound: dict[str, set[str]] = {path: set() for path in pages}
 
     for path, page in sorted(pages.items()):
-        if not page.meta.get("type"):
-            report.problems.append({"page": path, "probleme": "en-tête sans champ `type`"})
+        if not page.meta.get(i18n.K_TYPE):
+            report.problems.append({"page": path, "problem": f"header without `{i18n.K_TYPE}` field"})
         if not page.summary and not page.is_decision:
-            report.problems.append({"page": path, "probleme": "en-tête sans champ `resume`"})
-        if page.is_decision and not page.meta.get("date"):
-            report.problems.append({"page": path, "probleme": "fiche de décision sans `date`"})
+            report.problems.append({"page": path, "problem": f"header without `{loc.k_summary}` field"})
+        if page.is_decision and not page.meta.get(i18n.K_DATE):
+            report.problems.append({"page": path, "problem": f"decision record without `{i18n.K_DATE}`"})
         if len(page.body) > max_page_chars:
-            report.problems.append({"page": path, "probleme": f"page trop longue ({len(page.body)} caractères)"})
+            report.problems.append({"page": path, "problem": f"page too long ({len(page.body)} characters)"})
         for target, _label in links(page.body):
             resolved = link_index.resolve(target)
             if resolved is None:
-                report.broken.append({"page": path, "cible": target})
+                report.broken.append({"page": path, "target": target})
             elif resolved in inbound and resolved != path:
                 inbound[resolved].add(path)
 
     mains = {}
-    for dossier in {p.dossier for p in pages.values()}:
-        main = main_page(dossier, pages)
+    for folder in {p.folder for p in pages.values()}:
+        main = main_page(folder, pages)
         if main:
-            mains[dossier] = main.path
+            mains[folder] = main.path
     for path, page in sorted(pages.items()):
         if path in mains.values():
-            continue  # les pages principales sont atteintes par l'index
+            continue  # main pages are reached through the index
         if not inbound[path]:
             report.orphans.append(path)
 
-    # ── mentions d'une page existante sans lien vers elle ─────────────────
+    # ── mentions of an existing page with no link to it ───────────────────
     targets: list[tuple[str, str]] = []
     for path, page in pages.items():
         if page.is_decision:
             continue
-        if path in mains.values() or path.split("/")[0] == CONCEPTS:
+        if path in mains.values() or path.split("/")[0] == loc.concepts:
             for term in {page.title, page.stem, *page.aliases}:
                 term = term.strip()
                 if len(term) >= 4 and term.lower() not in _STOP:
@@ -93,13 +98,13 @@ def lint(root: Path, max_page_chars: int = 24000, min_dossiers: int = 2) -> Lint
         for term, target in sorted(targets):
             if target == path or target in linked or target in seen:
                 continue
-            if page.dossier == pages[target].dossier and target in mains.values():
-                continue  # une page n'a pas à pointer vers la page principale de son propre dossier
+            if page.folder == pages[target].folder and target in mains.values():
+                continue  # a page need not point to the main page of its own folder
             if re.search(r"(?<![\wÀ-ÿ-])" + re.escape(term) + r"(?![\wÀ-ÿ-])", text, re.I):
                 seen.add(target)
-                report.unlinked.append({"page": path, "cible": target, "terme": term})
+                report.unlinked.append({"page": path, "target": target, "term": term})
 
-    # ── entités citées dans plusieurs dossiers sans page à elles ──────────
+    # ── entities cited in several folders with no page of their own ───────
     known = set()
     for page in pages.values():
         for term in (page.title, page.stem, *page.aliases):
@@ -110,24 +115,24 @@ def lint(root: Path, max_page_chars: int = 24000, min_dossiers: int = 2) -> Lint
             key = slugify(entity)
             if not key or key in known or len(key) < 3:
                 continue
-            item = seen_entities.setdefault(key, {"entite": entity, "dossiers": set(), "pages": []})
-            item["dossiers"].add(page.dossier)
+            item = seen_entities.setdefault(key, {"entity": entity, "folders": set(), "pages": []})
+            item["folders"].add(page.folder)
             item["pages"].append(path)
     for key in sorted(seen_entities):
         item = seen_entities[key]
-        if len(item["dossiers"]) >= min_dossiers:
+        if len(item["folders"]) >= min_folders:
             report.concepts.append({
-                "entite": item["entite"], "dossiers": sorted(item["dossiers"]), "pages": sorted(item["pages"])[:12],
-                "nb_pages": len(item["pages"]),
+                "entity": item["entity"], "folders": sorted(item["folders"]), "pages": sorted(item["pages"])[:12],
+                "page_count": len(item["pages"]),
             })
-    # Les plus partagés d'abord : le tisseur n'en traite que quelques-uns par passage.
-    report.concepts.sort(key=lambda c: (-len(c["dossiers"]), -c["nb_pages"], slugify(c["entite"])))
+    # The most widely shared first: the weaver only handles a few of them per run.
+    report.concepts.sort(key=lambda c: (-len(c["folders"]), -c["page_count"], slugify(c["entity"])))
 
     report.stats = {
         "pages": len(pages),
         "decisions": sum(1 for p in pages.values() if p.is_decision),
-        "concepts": sum(1 for p in pages if p.split("/")[0] == CONCEPTS),
-        "dossiers": len({p.dossier for p in pages.values() if p.dossier and p.dossier != CONCEPTS}),
+        "concepts": sum(1 for p in pages if p.split("/")[0] == loc.concepts),
+        "folders": len({p.folder for p in pages.values() if p.folder and p.folder != loc.concepts}),
     }
     return report
 
@@ -135,7 +140,7 @@ def lint(root: Path, max_page_chars: int = 24000, min_dossiers: int = 2) -> Lint
 def summary(report: LintReport) -> str:
     stats = report.stats
     return (
-        f"{stats.get('pages', 0)} pages, {stats.get('dossiers', 0)} dossiers, {stats.get('decisions', 0)} décisions ; "
-        f"{len(report.problems)} problème(s), {len(report.broken)} lien(s) cassé(s), {len(report.orphans)} orpheline(s), "
-        f"{len(report.unlinked)} mention(s) sans lien, {len(report.concepts)} concept(s) candidat(s)"
+        f"{stats.get('pages', 0)} pages, {stats.get('folders', 0)} folders, {stats.get('decisions', 0)} decisions; "
+        f"{len(report.problems)} problem(s), {len(report.broken)} broken link(s), {len(report.orphans)} orphan(s), "
+        f"{len(report.unlinked)} unlinked mention(s), {len(report.concepts)} concept candidate(s)"
     )

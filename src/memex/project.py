@@ -1,7 +1,8 @@
-"""Identité d'un projet à partir du répertoire de travail d'une session.
+"""A project's identity, derived from a session's working directory.
 
-Une session dans un dépôt git est rattachée au dépôt (remote normalisé), y
-compris depuis un worktree, même supprimé depuis. Hors dépôt : pas de projet.
+A session inside a git repository is attached to that repository (normalised
+remote), including from a worktree, even one deleted since. Outside a
+repository: no project.
 """
 from __future__ import annotations
 
@@ -96,14 +97,14 @@ class ProjectResolver:
             return Project(slug=slugify(name), name=name, remote=remote, root=root)
         gone = Path(stripped)
         if not gone.exists() and _looks_like_project(gone):
-            # Dossier (ou worktree) supprimé depuis : on garde son nom comme identité du projet.
+            # Folder (or worktree) deleted since: we keep its name as the project's identity.
             return Project(slug=slugify(gone.name), name=gone.name, root=stripped)
         return None
 
 
 def _looks_like_project(path: Path) -> bool:
-    """Un dossier disparu compte comme projet s'il était rangé sous le répertoire personnel,
-    à deux niveaux au moins, hors dossiers cachés et temporaires."""
+    """A folder that is gone counts as a project if it sat under the home directory,
+    at least two levels deep, outside hidden and temporary folders."""
     try:
         relative = path.relative_to(Path.home())
     except ValueError:
@@ -127,21 +128,21 @@ def exclusion_reason(
     exclude_remotes: list[str],
     include_paths: list[str],
 ) -> str:
-    """Chaîne vide si la session peut être capturée, sinon la raison de l'exclusion."""
+    """Empty string if the session may be captured, otherwise the reason for excluding it."""
     path = os.path.expanduser(cwd or "")
     if include_paths and not _match_any(path, include_paths):
-        return "hors de MEMEX_INCLUDE_PATHS"
+        return "outside MEMEX_INCLUDE_PATHS"
     if path and _match_any(path, exclude_paths):
-        return "chemin exclu (MEMEX_EXCLUDE_PATHS)"
+        return "excluded path (MEMEX_EXCLUDE_PATHS)"
     if project and project.remote:
         for pattern in exclude_remotes:
             if fnmatch.fnmatch(project.remote, pattern.lower()) or pattern.lower() in project.remote:
-                return "dépôt exclu (MEMEX_EXCLUDE_REMOTES)"
+                return "excluded repository (MEMEX_EXCLUDE_REMOTES)"
     probe = Path(project.root) if project and project.root else Path(path) if path else None
     home = Path.home()
     while probe and probe != probe.parent:
         if (probe / ".memex-ignore").exists():
-            return f"fichier .memex-ignore dans {probe}"
+            return f".memex-ignore file in {probe}"
         if probe == home:
             break
         probe = probe.parent

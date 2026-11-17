@@ -1,4 +1,4 @@
-"""Exploitation du serveur : sauvegardes, restauration, clés des appareils."""
+"""Server operations: backups, restore, device keys."""
 from __future__ import annotations
 
 import io
@@ -13,12 +13,14 @@ from .config import Config
 from .util import atomic_write, now, run
 from .wikirepo import WikiRepo
 
-_KEY = re.compile(r"^(ssh-ed25519|ssh-rsa|ecdsa-sha2-[A-Za-z0-9-]+|sk-[A-Za-z0-9@.-]+) ([A-Za-z0-9+/=]{40,})(?: (.*))?$")
+_KEY = re.compile(
+    r"^(ssh-ed25519|ssh-rsa|ecdsa-sha2-[A-Za-z0-9-]+|sk-[A-Za-z0-9@.-]+) ([A-Za-z0-9+/=]{40,})(?: (.*))?$"
+)
 _DEVICE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
 
 def backup(config: Config) -> Path:
-    """Une archive autonome : l'historique complet du wiki, les condensés et l'état."""
+    """A self-contained archive: the full history of the wiki, the segments and the state."""
     config.backups.mkdir(parents=True, exist_ok=True)
     target = config.backups / f"memex-{now().strftime('%Y%m%dT%H%M%SZ')}.tar.gz"
     with tempfile.TemporaryDirectory(prefix="memex-backup-") as tmp:
@@ -44,10 +46,10 @@ def _skip_locks(info: tarfile.TarInfo):
 
 
 def restore_backup(config: Config, archive_path: Path, force: bool = False) -> str:
-    """Reconstruit un serveur vide à partir d'une sauvegarde."""
+    """Rebuilds an empty server from a backup."""
     repo = WikiRepo(config)
     if repo.exists() and not force:
-        return "Le wiki existe déjà sur ce serveur : relance avec --force pour le remplacer."
+        return "The wiki already exists on this server: run again with --force to replace it."
     with tempfile.TemporaryDirectory(prefix="memex-restore-") as tmp:
         with tarfile.open(archive_path, "r:gz") as archive:
             for member in archive.getmembers():
@@ -62,7 +64,7 @@ def restore_backup(config: Config, archive_path: Path, force: bool = False) -> s
                     atomic_write(Path(tmp) / name, handle.read(), 0o640)
         bundle = Path(tmp) / "wiki.bundle"
         if not bundle.is_file():
-            return "Sauvegarde invalide : wiki.bundle absent."
+            return "Invalid backup: wiki.bundle is missing."
         if repo.exists():
             shutil.rmtree(config.wiki_repo)
         config.wiki_repo.parent.mkdir(parents=True, exist_ok=True)
@@ -74,14 +76,14 @@ def restore_backup(config: Config, archive_path: Path, force: bool = False) -> s
             source = Path(tmp) / name
             if source.is_dir():
                 shutil.copytree(source, config.home / name, dirs_exist_ok=True)
-    # Le manifeste du vault ne vaut plus rien : au prochain passage, le wiki fera foi.
+    # The vault manifest is now worthless: on the next run, the wiki will be the reference.
     (config.state_dir / "vault-manifest.json").unlink(missing_ok=True)
-    return f"Serveur restauré depuis {Path(archive_path).name}."
+    return f"Server restored from {Path(archive_path).name}."
 
 
-# ── appareils : une clé SSH par machine, limitée à la porte memex ─────────
+# ── devices: one SSH key per machine, restricted to the memex gate ────────
 def _owner(config: Config):
-    """Le compte qui fait tourner memex : le propriétaire de MEMEX_HOME."""
+    """The account that runs memex: the owner of MEMEX_HOME."""
     import pwd
 
     try:
@@ -109,13 +111,13 @@ def _lines(config: Config) -> list[str]:
 
 
 def _write_keys(config: Config, lines: list[str]) -> str:
-    """Lancé en root, le fichier appartient à root : le compte memex (donc un agent) ne peut pas s'ajouter de clé."""
+    """Run as root, the file belongs to root: the memex account (hence an agent) cannot add a key for itself."""
     path = _authorized_keys(config)
     try:
         path.parent.mkdir(mode=0o755 if os.geteuid() == 0 else 0o700, parents=True, exist_ok=True)
         atomic_write(path, "\n".join(lines) + ("\n" if lines else ""), 0o644 if os.geteuid() == 0 else 0o600)
     except PermissionError:
-        return f"Impossible d'écrire {path} : relance la commande avec sudo."
+        return f"Cannot write {path}: run the command again with sudo."
     return ""
 
 
@@ -128,9 +130,9 @@ def device_add(config: Config, name: str, key: str) -> str:
     key = " ".join(key.split())
     match = _KEY.match(key)
     if not _DEVICE.match(name):
-        return "Nom d'appareil invalide : lettres, chiffres, point, tiret et souligné seulement."
+        return "Invalid device name: letters, digits, dot, hyphen and underscore only."
     if not match:
-        return "Clé publique invalide : colle le contenu d'un fichier .pub (ssh-ed25519 AAAA…)."
+        return "Invalid public key: paste the contents of a .pub file (ssh-ed25519 AAAA…)."
     blob = match.group(2)
     kept = [line for line in _lines(config) if _device_of(line) != name and blob not in line]
     kept.append(f'restrict,command="{_gate_binary(config)} --forced --device {name}" {key}')
@@ -143,15 +145,15 @@ def device_add(config: Config, name: str, key: str) -> str:
         owner = _owner(config)
         for folder in (config.inbox, inbox):
             os.chown(folder, owner.pw_uid, owner.pw_gid)
-    return f"Appareil « {name} » autorisé."
+    return f'Device "{name}" authorised.'
 
 
 def device_remove(config: Config, name: str) -> str:
     lines = _lines(config)
     kept = [line for line in lines if _device_of(line) != name]
     if len(kept) == len(lines):
-        return f"Aucun appareil nommé « {name} »."
-    return _write_keys(config, kept) or f"Appareil « {name} » retiré."
+        return f'No device named "{name}".'
+    return _write_keys(config, kept) or f'Device "{name}" removed.'
 
 
 def device_list(config: Config) -> list[str]:

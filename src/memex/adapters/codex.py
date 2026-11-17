@@ -1,8 +1,8 @@
-"""Sessions Codex : ~/.codex/sessions/AAAA/MM/JJ/rollout-*.jsonl
+"""Codex sessions: ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl
 
-Les paroles humaines et les réponses viennent des événements `item_completed`
-(UserMessage / AgentMessage). Les messages `response_item` de rôle `user`
-contiennent surtout des instructions injectées : on ne s'y fie pas.
+Human words and replies come from the `item_completed` events (UserMessage /
+AgentMessage). The `response_item` messages with role `user` mostly hold
+injected instructions: we do not rely on them.
 """
 from __future__ import annotations
 
@@ -49,8 +49,8 @@ class CodexAdapter(Adapter):
         offset = int(cursor or 0)
         meta = dict(meta or {})
         files = list(meta.get("files") or [])
-        items: list[tuple] = []   # format courant (item_completed)
-        legacy: list[tuple] = []  # anciens événements user_message / agent_message
+        items: list[tuple] = []   # current format (item_completed)
+        legacy: list[tuple] = []  # older user_message / agent_message events
         skip = meta.get("skip", "")
         with open(ref.path, "rb") as handle:
             handle.seek(offset)
@@ -72,7 +72,7 @@ class CodexAdapter(Adapter):
                         meta.setdefault("cwd", payload["cwd"])
                     source, thread = payload.get("source"), payload.get("thread_source")
                     if isinstance(source, dict) or (thread and thread != "user"):
-                        skip = meta["skip"] = "session interne de Codex (sous-agent ou relecture)"
+                        skip = meta["skip"] = "internal Codex session (sub-agent or review)"
                     continue
                 if kind == "turn_context" and payload.get("cwd"):
                     meta.setdefault("cwd", payload["cwd"])
@@ -108,6 +108,6 @@ class CodexAdapter(Adapter):
                         legacy.append(("assistant", stamp, text, payload.get("phase") != "commentary"))
         events = items if any(e[0] == "human" for e in items) or not legacy else legacy
         if any(e[0] == "human" and is_pipeline(e[2]) for e in events):
-            skip = meta["skip"] = "session du pipeline memex"
+            skip = meta["skip"] = "memex pipeline session"
         meta["files"] = files[-60:]
         return Chunk(messages=mark_final(events), meta=meta, cursor=offset, skip=skip)

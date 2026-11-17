@@ -1,4 +1,4 @@
-"""Utilitaires partagés : temps, fichiers atomiques, verrous, sous-processus."""
+"""Shared utilities: time, atomic files, locks, subprocesses."""
 from __future__ import annotations
 
 import contextlib
@@ -15,6 +15,8 @@ import unicodedata
 from pathlib import Path
 from typing import Any, Iterator, Optional, Sequence
 
+from . import i18n
+
 UTC = dt.timezone.utc
 
 
@@ -28,7 +30,7 @@ def iso(ts: Optional[dt.datetime] = None) -> str:
 
 
 def parse_ts(value: Any) -> Optional[dt.datetime]:
-    """Accepte ISO 8601 (avec Z), epoch en secondes ou millisecondes."""
+    """Accepts ISO 8601 (with Z), or an epoch in seconds or milliseconds."""
     if value is None or value == "":
         return None
     if isinstance(value, dt.datetime):
@@ -102,7 +104,7 @@ class LockBusy(RuntimeError):
 
 @contextlib.contextmanager
 def file_lock(path: Path, wait: bool = False) -> Iterator[None]:
-    """Verrou exclusif inter-processus. `wait=False` lève LockBusy si pris."""
+    """Exclusive inter-process lock. `wait=False` raises LockBusy if it is already held."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     fh = open(path, "a+")
@@ -122,7 +124,7 @@ class CommandError(RuntimeError):
     def __init__(self, cmd: Sequence[str], returncode: int, stdout: str, stderr: str):
         self.cmd, self.returncode, self.stdout, self.stderr = list(cmd), returncode, stdout, stderr
         tail = (stderr or stdout or "").strip()[-600:]
-        super().__init__(f"{' '.join(map(str, cmd))!r} a échoué ({returncode}) : {tail}")
+        super().__init__(f"{' '.join(map(str, cmd))!r} failed ({returncode}): {tail}")
 
 
 def run(
@@ -161,19 +163,19 @@ def slugify(text: str, fallback: str = "x") -> str:
 
 
 def safe_filename(text: str, max_len: int = 80) -> str:
-    """Nom de fichier lisible (accents conservés) sans caractères interdits par Obsidian."""
+    """A readable file name (accents kept) without the characters Obsidian forbids."""
     cleaned = re.sub(r'[\\/:*?"<>|#^\[\]]+', " ", text or "")
     cleaned = re.sub(r"\s+", " ", cleaned).strip(" .")
-    return (cleaned[:max_len].rstrip(" .")) or "sans-titre"
+    return (cleaned[:max_len].rstrip(" .")) or i18n.current().t("name.untitled")
 
 
-def truncate_middle(text: str, limit: int, label: str = "tronqué") -> str:
+def truncate_middle(text: str, limit: int, label: str = "truncated") -> str:
     if limit <= 0 or len(text) <= limit:
         return text
     head = int(limit * 0.7)
     tail = max(limit - head, 0)
     cut = len(text) - head - tail
-    return f"{text[:head]}\n[… {label} : {cut} caractères …]\n{text[len(text) - tail:] if tail else ''}"
+    return f"{text[:head]}\n[… {label}: {cut} characters …]\n{text[len(text) - tail:] if tail else ''}"
 
 
 def sha256_file(path: Path) -> str:
@@ -189,7 +191,7 @@ def sha256_text(text: str) -> str:
 
 
 def tilde(path: str | Path) -> str:
-    """Remplace le répertoire personnel par ~ (les condensés ne portent pas le nom d'utilisateur)."""
+    """Replaces the home directory with ~ (segments do not carry the user name)."""
     text = str(path)
     home = str(Path.home())
     return "~" + text[len(home):] if text == home or text.startswith(home + os.sep) else text

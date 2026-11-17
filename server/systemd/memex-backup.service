@@ -1,5 +1,5 @@
 [Unit]
-Description=memex : sauvegarde quotidienne (historique du wiki, condensés, état)
+Description=memex: daily backup (wiki history, segments, state)
 
 [Service]
 Type=oneshot

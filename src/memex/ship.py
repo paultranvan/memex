@@ -1,9 +1,9 @@
-"""Liaison hôte → serveur : envoi des condensés, récupération du wiki et des sauvegardes.
+"""Host → server link: sending segments, fetching the wiki and the backups.
 
-Toujours à l'initiative de l'hôte. Trois modes selon MEMEX_SERVER_SSH :
-  - vide     : hors-ligne, les condensés s'accumulent dans la boîte d'envoi ;
-  - `local`  : le serveur est sur cette machine (essai, ou tout-en-un) ;
-  - `u@hôte` : par SSH, à travers la commande forcée `memex-gate`.
+Always initiated by the host. Three modes, depending on MEMEX_SERVER_SSH:
+  - empty:    offline, segments pile up in the outbox;
+  - `local`:  the server is on this machine (trial, or all-in-one);
+  - `u@host`: over SSH, through the forced command `memex-gate`.
 """
 from __future__ import annotations
 
@@ -36,16 +36,16 @@ class ShipReport:
     def summary(self) -> str:
         parts = []
         if self.sent or self.duplicate:
-            parts.append(f"{self.sent} envoyé(s)" + (f", {self.duplicate} déjà connu(s)" if self.duplicate else ""))
+            parts.append(f"{self.sent} sent" + (f", {self.duplicate} already known" if self.duplicate else ""))
         if self.rejected:
-            parts.append(f"{len(self.rejected)} refusé(s)")
+            parts.append(f"{len(self.rejected)} rejected")
         if self.pending:
-            parts.append(f"{self.pending} en attente")
+            parts.append(f"{self.pending} pending")
         if self.wiki:
-            parts.append(f"wiki : {self.wiki}")
+            parts.append(f"wiki: {self.wiki}")
         if self.error:
-            parts.append(f"erreur : {self.error}")
-        return ", ".join(parts) or "rien à envoyer"
+            parts.append(f"error: {self.error}")
+        return ", ".join(parts) or "nothing to send"
 
 
 class Transport:
@@ -116,7 +116,7 @@ def ship(config: Config, report: Optional[ShipReport] = None) -> ShipReport:
 
 
 def resend_all(config: Config) -> int:
-    """Remet tous les condensés déjà envoyés dans la boîte d'envoi (reconstruction du serveur)."""
+    """Puts every segment already sent back into the outbox (rebuilding the server)."""
     count = 0
     config.outbox.mkdir(parents=True, exist_ok=True)
     for path in sorted(config.sent.rglob("*.md")) if config.sent.is_dir() else []:
@@ -137,7 +137,7 @@ def pull(config: Config, report: Optional[ShipReport] = None) -> ShipReport:
         if not (clone / ".git").exists():
             clone.parent.mkdir(parents=True, exist_ok=True)
             run(["git", "clone", "--quiet", transport.wiki_url(), str(clone)], env=env, timeout=timeout)
-            report.wiki = "cloné"
+            report.wiki = "cloned"
             return report
         before = run(["git", "-C", clone, "rev-parse", "HEAD"], check=False).stdout.strip()
         run(["git", "-C", clone, "remote", "set-url", "origin", transport.wiki_url()], env=env)
@@ -145,14 +145,14 @@ def pull(config: Config, report: Optional[ShipReport] = None) -> ShipReport:
         run(["git", "-C", clone, "reset", "--quiet", "--hard", "origin/main"], env=env)
         run(["git", "-C", clone, "clean", "-fdq"], env=env)
         after = run(["git", "-C", clone, "rev-parse", "HEAD"], check=False).stdout.strip()
-        report.wiki = "à jour" if before == after else "mis à jour"
+        report.wiki = "up to date" if before == after else "updated"
     except (CommandError, subprocess.TimeoutExpired, OSError) as exc:
         report.error = report.error or str(exc)[:300]
     return report
 
 
 def pull_backup(config: Config) -> Optional[Path]:
-    """Une fois par jour au plus : rapatrie la dernière sauvegarde du serveur."""
+    """At most once a day: brings back the server's latest backup."""
     transport = Transport(config)
     if not transport.enabled or not config.bool("MEMEX_BACKUP_PULL"):
         return None
@@ -184,8 +184,8 @@ def sync(config: Config, force: tuple[str, ...] = (), force_all: bool = False, q
     pull_backup(config)
     write_json(config.data_dir / "last-sync.json", {"at": time.time(), "sweep": swept.summary(), "ship": report.summary()})
     if not quiet:
-        print(f"balayage : {swept.summary()}")
-        print(f"liaison  : {report.summary()}")
+        print(f"sweep: {swept.summary()}")
+        print(f"link:  {report.summary()}")
     elif report.error:
-        eprint(f"memex sync : {report.error}")
+        eprint(f"memex sync: {report.error}")
     return 1 if report.error else 0

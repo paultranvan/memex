@@ -1,7 +1,7 @@
-"""Configuration : un fichier `KEY=VALUE` commun à l'hôte et au serveur.
+"""Configuration: one `KEY=VALUE` file shared by the host and the server.
 
-Ordre de résolution : variable d'environnement > fichier > valeur par défaut.
-Le fichier est lu par ce module, jamais exécuté : ne pas le charger dans un shell.
+Resolution order: environment variable > file > default value.
+The file is read by this module, never executed: do not source it in a shell.
 """
 from __future__ import annotations
 
@@ -14,10 +14,10 @@ from typing import Optional
 from .util import split_list
 
 DEFAULTS: dict[str, str] = {
-    # ── commun ────────────────────────────────────────────────────────────
-    "MEMEX_LANG": "fr",
+    # ── common ────────────────────────────────────────────────────────────
+    "MEMEX_LANG": "en",
     "MEMEX_TZ": "Europe/Paris",
-    # ── hôte : capture ────────────────────────────────────────────────────
+    # ── host: capture ─────────────────────────────────────────────────────
     "MEMEX_DEVICE": "",
     "MEMEX_DATA_DIR": "~/.local/share/memex",
     "MEMEX_SOURCES": "claude-code,codex",
@@ -35,7 +35,7 @@ DEFAULTS: dict[str, str] = {
     "MEMEX_OPTOUT_MARKER": "#memex-off",
     "MEMEX_REDACT_EXTRA": "",
     "MEMEX_REDACT_EMAILS": "0",
-    # ── hôte : liaison avec le serveur ────────────────────────────────────
+    # ── host: link to the server ──────────────────────────────────────────
     "MEMEX_SERVER_SSH": "",
     "MEMEX_SERVER_HOME": "/srv/memex",
     "MEMEX_SSH_CMD": "ssh",
@@ -44,9 +44,9 @@ DEFAULTS: dict[str, str] = {
     "MEMEX_SYNC_MIN_INTERVAL_S": "90",
     "MEMEX_BACKUP_PULL": "1",
     "MEMEX_BACKUP_KEEP": "7",
-    # ── hôte : lecture par les agents ─────────────────────────────────────
+    # ── host: reading by the agents ───────────────────────────────────────
     "MEMEX_HOOK_MAX_CHARS": "6000",
-    # ── serveur ───────────────────────────────────────────────────────────
+    # ── server ────────────────────────────────────────────────────────────
     "MEMEX_HOME": "/srv/memex",
     "MEMEX_VAULT_DIR": "",
     "MEMEX_AGENT": "hermes",
@@ -67,10 +67,10 @@ DEFAULTS: dict[str, str] = {
     "MEMEX_MIN_USER_CHARS": "80",
     "MEMEX_MAX_RETRIES": "3",
     "MEMEX_MAX_PAGE_CHARS": "24000",
-    "MEMEX_TISSEUR": "1",
-    "MEMEX_TISSEUR_MIN_PAGES": "12",
-    "MEMEX_TISSEUR_MIN_DOSSIERS": "2",
-    "MEMEX_VERIF_MAX_ACTIONS": "8",
+    "MEMEX_WEAVER": "1",
+    "MEMEX_WEAVER_MIN_PAGES": "12",
+    "MEMEX_WEAVER_MIN_FOLDERS": "2",
+    "MEMEX_CURATOR_MAX_ACTIONS": "8",
     "MEMEX_REVIEW_TTL_DAYS": "10",
     "MEMEX_SERVER_BACKUP_KEEP": "14",
 }
@@ -129,7 +129,7 @@ class Config:
                 values[key] = value
         return cls(values, found)
 
-    # ── accès bruts ───────────────────────────────────────────────────────
+    # ── raw access ────────────────────────────────────────────────────────
     def get(self, key: str, default: str = "") -> str:
         return self._values.get(key, default)
 
@@ -151,7 +151,7 @@ class Config:
     def path_value(self, key: str) -> Path:
         return Path(os.path.expandvars(self.get(key))).expanduser()
 
-    # ── hôte ──────────────────────────────────────────────────────────────
+    # ── host ──────────────────────────────────────────────────────────────
     @property
     def device(self) -> str:
         name = self.get("MEMEX_DEVICE") or socket.gethostname().split(".")[0]
@@ -185,7 +185,7 @@ class Config:
     def is_local_server(self) -> bool:
         return self.server_ssh.lower() == "local"
 
-    # ── serveur ───────────────────────────────────────────────────────────
+    # ── server ────────────────────────────────────────────────────────────
     @property
     def home(self) -> Path:
         return self.path_value("MEMEX_HOME")

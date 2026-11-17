@@ -1,4 +1,4 @@
-"""Modèle des pages du wiki : types, en-têtes, liens Obsidian."""
+"""Wiki page model: types, front matter, Obsidian links."""
 from __future__ import annotations
 
 import re
@@ -6,14 +6,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
-from . import frontmatter
+from . import frontmatter, i18n
 
-PROJECTS, TOPICS, CONCEPTS, JOURNAL = "Projets", "Sujets", "Concepts", "Journal"
-DECISIONS = "Décisions"
-CONTENT_DIRS = (PROJECTS, TOPICS, CONCEPTS)
-MANAGED_FILES = ("index.md", "log.md")        # tenus par le code, jamais par un agent
-PROTECTED_FILES = ("AGENTS.md",)              # conventions : modifiables par l'humain seulement
-TYPES = ("projet", "sujet", "decision", "concept", "synthese", "journal", "meta")
+MANAGED_FILES = ("index.md", "log.md")        # kept by the code, never by an agent
+PROTECTED_FILES = ("AGENTS.md",)              # conventions: only the human may edit them
 
 _LINK = re.compile(r"!?\[\[([^\]\|#\n]+)(#[^\]\|\n]*)?(?:\|([^\]\n]*))?\]\]")
 _CODE = re.compile(r"```.*?```|`[^`\n]*`", re.S)
@@ -22,7 +18,7 @@ _H1 = re.compile(r"(?m)^# +(.+?)\s*$")
 
 @dataclass
 class Page:
-    path: str                      # relatif à la racine du wiki, séparateur /
+    path: str                      # relative to the wiki root, / as separator
     meta: dict[str, Any] = field(default_factory=dict)
     body: str = ""
 
@@ -32,34 +28,35 @@ class Page:
 
     @property
     def kind(self) -> str:
-        return str(self.meta.get("type") or infer_type(self.path))
+        return str(self.meta.get(i18n.K_TYPE) or infer_type(self.path))
 
     @property
     def title(self) -> str:
-        if self.meta.get("titre"):
-            return str(self.meta["titre"])
+        key = i18n.current().k_title
+        if self.meta.get(key):
+            return str(self.meta[key])
         match = _H1.search(self.body)
         return match.group(1) if match else self.stem
 
     @property
     def summary(self) -> str:
-        return " ".join(str(self.meta.get("resume") or "").split())
+        return " ".join(str(self.meta.get(i18n.current().k_summary) or "").split())
 
     @property
     def aliases(self) -> list[str]:
-        return frontmatter.as_list(self.meta.get("aliases"))
+        return frontmatter.as_list(self.meta.get(i18n.K_ALIASES))
 
     @property
     def entities(self) -> list[str]:
-        return frontmatter.as_list(self.meta.get("entites"))
+        return frontmatter.as_list(self.meta.get(i18n.current().k_entities))
 
     @property
-    def dossier(self) -> str:
-        return dossier_of(self.path)
+    def folder(self) -> str:
+        return folder_of(self.path)
 
     @property
     def is_decision(self) -> bool:
-        return is_decision_path(self.path) or self.meta.get("type") == "decision"
+        return is_decision_path(self.path) or self.meta.get(i18n.K_TYPE) == i18n.current().type("decision")
 
     def render(self) -> str:
         return frontmatter.dump(self.meta, self.body)
@@ -71,13 +68,14 @@ def parse_page(path: str, text: str) -> Page:
 
 
 def is_decision_path(path: str) -> bool:
-    return f"/{DECISIONS}/" in "/" + path
+    return f"/{i18n.current().decisions}/" in "/" + path
 
 
-def dossier_of(path: str) -> str:
-    """`Projets/Solitaire/Décisions/x.md` → `Projets/Solitaire` ; `Concepts/x.md` → `Concepts`."""
+def folder_of(path: str) -> str:
+    """`Projects/Solitaire/Decisions/x.md` → `Projects/Solitaire`; `Concepts/x.md` → `Concepts`."""
+    loc = i18n.current()
     parts = path.split("/")
-    if parts[0] in (PROJECTS, TOPICS):
+    if parts[0] in (loc.projects, loc.topics):
         if len(parts) >= 3:
             return "/".join(parts[:2])
         return parts[0] + "/" + Path(parts[-1]).stem
@@ -85,18 +83,19 @@ def dossier_of(path: str) -> str:
 
 
 def infer_type(path: str) -> str:
+    loc = i18n.current()
     top = path.split("/")[0]
     if is_decision_path(path):
-        return "decision"
-    if top == PROJECTS:
-        return "projet"
-    if top == TOPICS:
-        return "sujet"
-    if top == CONCEPTS:
-        return "concept"
-    if top == JOURNAL:
-        return "journal"
-    return "meta"
+        return loc.type("decision")
+    if top == loc.projects:
+        return loc.type("project")
+    if top == loc.topics:
+        return loc.type("topic")
+    if top == loc.concepts:
+        return loc.type("concept")
+    if top == loc.journal:
+        return loc.type("journal")
+    return loc.type("meta")
 
 
 def is_hidden(relative: str) -> bool:
@@ -104,7 +103,7 @@ def is_hidden(relative: str) -> bool:
 
 
 def iter_files(root: Path) -> Iterator[str]:
-    """Tous les fichiers non cachés, chemins relatifs triés."""
+    """Every file that is not hidden, as sorted relative paths."""
     root = Path(root)
     found = []
     for path in root.rglob("*"):
@@ -128,24 +127,25 @@ def load_wiki(root: Path) -> dict[str, Page]:
 
 
 def content_pages(pages: dict[str, Page]) -> dict[str, Page]:
-    return {p: page for p, page in pages.items() if p.split("/")[0] in CONTENT_DIRS}
+    content_dirs = i18n.current().content_dirs
+    return {p: page for p, page in pages.items() if p.split("/")[0] in content_dirs}
 
 
 def links(body: str) -> list[tuple[str, str]]:
-    """Cibles des liens `[[cible|libellé]]`, hors blocs de code."""
+    """Targets of the `[[target|label]]` links, code blocks excluded."""
     stripped = _CODE.sub("", body)
     return [(m.group(1).strip(), (m.group(3) or "").strip()) for m in _LINK.finditer(stripped)]
 
 
 def unlink(text: str) -> str:
-    """Remplace chaque lien par son libellé visible : sert à comparer deux textes « aux liens près »."""
+    """Replaces each link with its visible label: used to compare two texts "links aside"."""
     def visible(match: re.Match) -> str:
         return (match.group(3) or "").strip() or Path(match.group(1).strip()).name
     return _LINK.sub(visible, text)
 
 
 class LinkIndex:
-    """Résolution des liens à la manière d'Obsidian : chemin exact, sinon nom de fichier."""
+    """Resolves links the way Obsidian does: exact path first, file name otherwise."""
 
     def __init__(self, paths: list[str]):
         self.by_path = {p[:-3].lower(): p for p in paths if p.endswith(".md")}
@@ -175,7 +175,7 @@ class LinkIndex:
 
 
 def wikilink(path: str, label: str = "") -> str:
-    """Lien Obsidian. Avec un chemin, le libellé est toujours donné : sinon Obsidian affiche le chemin entier."""
+    """Obsidian link. With a path, the label is always given: otherwise Obsidian shows the whole path."""
     target = path[:-3] if path.endswith(".md") else path
     label = (label or Path(target).name).replace("|", "-").replace("]", ")").replace("[", "(")
     return f"[[{target}|{label}]]" if "/" in target or label != target else f"[[{target}]]"
@@ -185,9 +185,9 @@ _UNSAFE = re.compile(r'[\\/:*?"<>|#^\[\]]')
 
 
 def safe_name(name: str) -> str:
-    """Nom de fichier accepté par Obsidian sur toutes les plateformes (Android et Windows refusent `:`)."""
+    """A file name Obsidian accepts on every platform (Android and Windows reject `:`)."""
     stem, dot, ext = name.rpartition(".")
     stem = stem if dot else name
     stem = re.sub(r"\s*:\s*", " - ", stem)
-    stem = re.sub(r"\s+", " ", _UNSAFE.sub(" ", stem)).strip(" .") or "sans-titre"
+    stem = re.sub(r"\s+", " ", _UNSAFE.sub(" ", stem)).strip(" .") or i18n.current().t("name.untitled")
     return f"{stem[:120].rstrip(' .')}.{ext}" if dot else stem

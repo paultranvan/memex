@@ -1,12 +1,12 @@
-# Réseau privé avec Tailscale
+# Private network with Tailscale
 
-memex n'a pas besoin de Tailscale : `MEMEX_SERVER_SSH` accepte n'importe quelle adresse SSH.
-Tailscale sert à ne plus exposer le SSH du serveur sur Internet, et à garantir que le serveur ne
-peut jamais ouvrir de connexion vers tes machines.
+memex does not need Tailscale: `MEMEX_SERVER_SSH` accepts any SSH address.
+Tailscale lets you stop exposing the server's SSH to the Internet, and guarantees that the server
+can never open a connection to your machines.
 
-## Mise en place
+## Set-up
 
-Sur le serveur et sur chaque machine de travail :
+On the server and on each work machine:
 
 ```bash
 # Debian / Ubuntu
@@ -17,28 +17,28 @@ sudo pacman -S tailscale && sudo systemctl enable --now tailscaled
 sudo tailscale up
 ```
 
-Sur le serveur, donne-lui l'étiquette `tag:vps` (console d'administration, ou
+On the server, give it the `tag:vps` tag (admin console, or
 `sudo tailscale up --advertise-tags=tag:vps`).
 
-Sur chaque machine de travail, refuse toute connexion entrante par Tailscale :
+On each work machine, refuse every incoming connection over Tailscale:
 
 ```bash
 sudo tailscale set --shields-up
 ```
 
-## Règles d'accès
+## Access rules
 
-Remplace la règle par défaut par celle de [`acl.example.jsonc`](acl.example.jsonc) : tes appareils
-peuvent joindre le SSH du serveur, et rien ne peut partir du serveur.
+Replace the default rule with the one in [`acl.example.jsonc`](acl.example.jsonc): your devices
+can reach the server's SSH, and nothing can originate from the server.
 
-## Fermer le SSH public
+## Closing public SSH
 
-Une fois `ssh memex@<nom-tailscale-du-vps>` vérifié depuis une machine, tu peux limiter le port 22
-du serveur à l'interface Tailscale dans son pare-feu. Garde la console de ton hébergeur comme issue
-de secours avant de le faire.
+Once `ssh memex@<tailscale-name-of-the-server>` has been checked from one machine, you can restrict
+port 22 of the server to the Tailscale interface in its firewall. Keep your hosting provider's
+console as a way back in before you do.
 
-## Côté memex
+## On the memex side
 
 ```
-MEMEX_SERVER_SSH=memex@<nom-tailscale-du-vps>
+MEMEX_SERVER_SSH=memex@<tailscale-name-of-the-server>
 ```

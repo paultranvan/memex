@@ -1,8 +1,8 @@
-"""Le vérificateur : il propose, tu approuves, alors seulement le wiki change.
+"""The curator: it proposes, you approve, and only then does the wiki change.
 
-Chaque action est un commit sur une branche de revue. Approuver une action,
-c'est reporter son commit sur `main` ; la refuser l'inscrit dans la liste des
-refus, pour qu'elle ne soit pas reproposée.
+Each action is a commit on a review branch. Approving an action means carrying
+its commit over to `main`; rejecting it records it in the list of refusals, so
+that it is not proposed again.
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from . import index
+from . import i18n, index
 from .agent import AgentError, parse_json_reply
 from .lint import lint
 from .notify import notify
@@ -21,8 +21,8 @@ from .util import CommandError, LockBusy, append_line, eprint, file_lock, iso, n
 from .validate import validate
 from .wikirepo import LandConflict
 
-ACTION_TYPES = {"fusion", "condensation", "correction", "suppression", "rangement"}
-PENDING, DONE, REJECTED, EXPIRED = "en_attente", "appliquee", "refusee", "expiree"
+ACTION_KINDS = {"merge", "condense", "fix", "delete", "move"}
+PENDING, DONE, REJECTED, EXPIRED = "pending", "applied", "rejected", "expired"
 
 
 class Reviews:
@@ -32,7 +32,7 @@ class Reviews:
         self.repo = server.repo
         self.dir = self.config.state_dir / "reviews"
 
-    # ── stockage ──────────────────────────────────────────────────────────
+    # ── storage ───────────────────────────────────────────────────────────
     def _path(self, review_id: str) -> Path:
         return self.dir / f"{review_id}.json"
 
@@ -43,7 +43,7 @@ class Reviews:
 
     def pending(self) -> Optional[dict]:
         for review in reversed(self.all()):
-            if review.get("statut") == PENDING:
+            if review.get("status") == PENDING:
                 return review
         return None
 
@@ -55,7 +55,7 @@ class Reviews:
     def refused(self, root: Path) -> list[dict]:
         items = []
         try:
-            with open(root / ".memex" / "refus.jsonl", encoding="utf-8") as handle:
+            with open(root / ".memex" / "refusals.jsonl", encoding="utf-8") as handle:
                 for line in handle:
                     try:
                         items.append(json.loads(line))
@@ -65,7 +65,7 @@ class Reviews:
             pass
         return items[-60:]
 
-    # ── passage du vérificateur ───────────────────────────────────────────
+    # ── curator run ───────────────────────────────────────────────────────
     def run(self, force: bool = False) -> int:
         try:
             with file_lock(self.server.lock_path, wait=True):
@@ -78,127 +78,144 @@ class Reviews:
         server.init()
         self.expire()
         if self.pending():
-            eprint("memex : une revue attend déjà ta réponse ; pas de nouveau passage.")
+            eprint("memex: a review is already waiting for your answer; no new run.")
             return 0
         server.sync_in()
         head = repo.head("main")
-        marker = config.state_dir / "verif.json"
+        marker = config.state_dir / "curator.json"
         last = (read_json(marker, {}) or {}).get("head", "")
         if last == head and not force:
-            eprint("memex : le wiki n'a pas changé depuis le dernier passage du vérificateur.")
+            eprint("memex: the wiki has not changed since the curator's last run.")
             return 0
+        loc = i18n.current()
         report = lint(repo.dir, config.int("MEMEX_MAX_PAGE_CHARS"))
         changed = ""
         if last:
             try:
-                changed = repo.git("diff", "--name-only", f"{last}..{head}", "--", "Projets", "Sujets", "Concepts")
+                changed = repo.git("diff", "--name-only", f"{last}..{head}", "--", *loc.content_dirs)
             except CommandError:
                 changed = ""
-        changed = "\n".join(f"- {line}" for line in changed.splitlines()[:80]) or "(premier passage : tout le wiki)"
-        refused = "\n".join(f"- {r.get('type')} · {r.get('titre')} · {', '.join(r.get('pages', []))}" for r in self.refused(repo.dir)) or "(aucune)"
+        changed = "\n".join(f"- {line}" for line in changed.splitlines()[:80]) or loc.t("glue.first_pass")
+        refused = "\n".join(
+            f"- {r.get('kind')} · {r.get('title')} · {', '.join(r.get('pages', []))}" for r in self.refused(repo.dir)
+        ) or loc.t("glue.none")
         review_id = now().strftime("%Y%m%d-%H%M")
         name = f"review-{review_id}"
         path = repo.new_worktree(name)
-        max_actions = config.int("MEMEX_VERIF_MAX_ACTIONS")
+        max_actions = config.int("MEMEX_CURATOR_MAX_ACTIONS")
         prompt = server.prompt(
-            "verif-diagnose", conventions=server.conventions(path),
-            report=json.dumps({"problemes": report.problems[:40], "orphelines": report.orphans[:30], "stats": report.stats}, ensure_ascii=False, indent=2),
+            "curate-diagnose", conventions=server.conventions(path),
+            report=json.dumps(
+                {"problems": report.problems[:40], "orphans": report.orphans[:30], "stats": report.stats},
+                ensure_ascii=False, indent=2,
+            ),
             changed=changed, index=index.compact(load_wiki(path)), refused=refused, max_actions=str(max_actions),
         )
         try:
-            plan = parse_json_reply(server.agent.run("read", prompt, path, f"verif-diag-{review_id}").text)
+            reply = server.agent.run("read", prompt, path, f"curate-diag-{review_id}", role="diagnose")
+            plan = parse_json_reply(reply.text)
         except AgentError as exc:
             repo.drop_worktree(name)
-            eprint(f"memex : diagnostic du vérificateur impossible ({exc})")
+            eprint(f"memex: the curator's diagnosis failed ({exc})")
             return 1
         repo.git("reset", "--quiet", "--hard", "HEAD", cwd=path)
         repo.git("clean", "-fdq", cwd=path)
         actions = []
         for raw in plan.get("actions") if isinstance(plan.get("actions"), list) else []:
-            if not isinstance(raw, dict) or str(raw.get("type")) not in ACTION_TYPES or not raw.get("titre"):
+            if not isinstance(raw, dict) or str(raw.get("kind")) not in ACTION_KINDS or not raw.get("title"):
                 continue
-            pages = [str(p) for p in raw.get("pages", []) if isinstance(p, str)] if isinstance(raw.get("pages"), list) else []
+            pages = (
+                [str(p) for p in raw.get("pages", []) if isinstance(p, str)]
+                if isinstance(raw.get("pages"), list) else []
+            )
             if any(is_decision_path(p) for p in pages):
                 continue
             actions.append({
-                "type": str(raw["type"]), "titre": str(raw["titre"])[:200], "pages": pages[:10],
-                "raison": str(raw.get("raison", ""))[:600], "consigne": str(raw.get("consigne", ""))[:1500],
+                "kind": str(raw["kind"]), "title": str(raw["title"])[:200], "pages": pages[:10],
+                "reason": str(raw.get("reason", ""))[:600], "instruction": str(raw.get("instruction", ""))[:1500],
             })
         questions = [
-            {"titre": str(q.get("titre", ""))[:200], "detail": str(q.get("detail", ""))[:800]}
+            {"title": str(q.get("title", ""))[:200], "detail": str(q.get("detail", ""))[:800]}
             for q in (plan.get("questions") if isinstance(plan.get("questions"), list) else [])
-            if isinstance(q, dict) and q.get("titre")
+            if isinstance(q, dict) and q.get("title")
         ][:5]
         today = now().astimezone(server.tz).strftime("%Y-%m-%d")
         applied = []
         for number, action in enumerate(actions[:max_actions], start=1):
             base = repo.head("HEAD", cwd=path)
-            entry = {**action, "n": number, "commit": "", "statut": "echec", "resume": ""}
+            entry = {**action, "n": number, "commit": "", "status": "failed", "summary": ""}
             try:
-                server.agent.run("edit", server.prompt("verif-apply", conventions=server.conventions(path), action=json.dumps(action, ensure_ascii=False, indent=2)), path, f"verif-{review_id}-a{number}")
+                apply_prompt = server.prompt(
+                    "curate-apply", conventions=server.conventions(path),
+                    action=json.dumps(action, ensure_ascii=False, indent=2),
+                )
+                server.agent.run("edit", apply_prompt, path, f"curate-{review_id}-a{number}", role="apply")
                 result = read_json(path / RESULT_FILE, {}) or {}
                 (path / RESULT_FILE).unlink(missing_ok=True)
-                verdict = validate(repo, path, base, "verificateur", today, config.int("MEMEX_MAX_PAGE_CHARS"))
+                verdict = validate(repo, path, base, "curator", today, config.int("MEMEX_MAX_PAGE_CHARS"))
                 if verdict.ok and verdict.changed:
                     server._stamp_pages(path, verdict.touched)
-                    commit = repo.commit_all(path, f"vérificateur : {action['titre']}", "verificateur")
+                    commit = repo.commit_all(path, f"curator: {action['title']}", "curator")
                     entry.update({
-                        "commit": commit or "", "statut": PENDING, "resume": str(result.get("resume", ""))[:300],
-                        "modifiees": sorted(verdict.touched), "supprimees": sorted(verdict.deleted),
+                        "commit": commit or "", "status": PENDING, "summary": str(result.get("summary", ""))[:300],
+                        "modified": sorted(verdict.touched), "deleted": sorted(verdict.deleted),
                     })
                 else:
-                    entry["resume"] = "; ".join(verdict.errors)[:300] or "aucun changement nécessaire"
+                    entry["summary"] = "; ".join(verdict.errors)[:300] or "no change needed"
             except AgentError as exc:
-                entry["resume"] = str(exc)[:300]
-            if entry["statut"] != PENDING:
+                entry["summary"] = str(exc)[:300]
+            if entry["status"] != PENDING:
                 repo.git("reset", "--quiet", "--hard", base, cwd=path)
                 repo.git("clean", "-fdq", cwd=path)
             applied.append(entry)
         repo.drop_worktree(name, keep_branch=True)
         write_json(marker, {"head": head, "date": iso()})
-        proposals = [a for a in applied if a["statut"] == PENDING]
+        proposals = [a for a in applied if a["status"] == PENDING]
         if not proposals and not questions:
             repo.git("branch", "-D", f"memex/{name}", check=False)
-            eprint("memex : le vérificateur n'a rien à proposer.")
+            eprint("memex: the curator has nothing to propose.")
             return 0
         review = {
-            "id": review_id, "cree": iso(), "base": head, "branche": f"memex/{name}",
-            "statut": PENDING if proposals else DONE, "actions": applied, "questions": questions,
+            "id": review_id, "created": iso(), "base": head, "branch": f"memex/{name}",
+            "status": PENDING if proposals else DONE, "actions": applied, "questions": questions,
         }
         self.dir.mkdir(parents=True, exist_ok=True)
         write_json(self._path(review_id), review)
-        notify(config, f"memex : le vérificateur propose {len(proposals)} action(s)", self.format(review))
+        notify(config, f"memex: the curator proposes {len(proposals)} action(s)", self.format(review))
         print(self.format(review))
         return 0
 
     def format(self, review: dict) -> str:
-        lines = [f"Revue {review['id']} — {review.get('statut')}"]
+        lines = [f"Review {review['id']} — {review.get('status')}"]
         for action in review.get("actions", []):
-            if action.get("statut") == "echec":
+            if action.get("status") == "failed":
                 continue
-            mark = {PENDING: "", DONE: " ✓", REJECTED: " ✗"}.get(action.get("statut"), "")
-            lines.append(f"\n{action['n']}. [{action['type']}] {action['titre']}{mark}")
-            if action.get("raison"):
-                lines.append(f"   Pourquoi : {action['raison']}")
-            if action.get("supprimees"):
-                lines.append(f"   Pages supprimées : {', '.join(action['supprimees'])}")
+            mark = {PENDING: "", DONE: " ✓", REJECTED: " ✗"}.get(action.get("status"), "")
+            lines.append(f"\n{action['n']}. [{action['kind']}] {action['title']}{mark}")
+            if action.get("reason"):
+                lines.append(f"   Why: {action['reason']}")
+            if action.get("deleted"):
+                lines.append(f"   Pages deleted: {', '.join(action['deleted'])}")
         for question in review.get("questions", []):
-            lines.append(f"\n? À trancher : {question['titre']}\n   {question.get('detail', '')}")
-        if review.get("statut") == PENDING:
-            lines.append("\nRéponds « ok », « ok sauf 2 » ou « non ».")
+            lines.append(f"\n? To decide: {question['title']}\n   {question.get('detail', '')}")
+        if review.get("status") == PENDING:
+            lines.append('\nAnswer "ok", "ok except 2" or "no".')
         return "\n".join(lines)
 
-    # ── approbation ───────────────────────────────────────────────────────
-    def decide(self, review_id: str = "", only: Optional[list[int]] = None, skip: Optional[list[int]] = None, reject_all: bool = False) -> str:
+    # ── approval ──────────────────────────────────────────────────────────
+    def decide(
+        self, review_id: str = "", only: Optional[list[int]] = None, skip: Optional[list[int]] = None,
+        reject_all: bool = False,
+    ) -> str:
         with file_lock(self.server.lock_path, wait=True):
             return self._decide(review_id, only, skip, reject_all)
 
     def _decide(self, review_id: str, only: Optional[list[int]], skip: Optional[list[int]], reject_all: bool) -> str:
         server, repo = self.server, self.repo
         review = self.get(review_id)
-        if not review or review.get("statut") != PENDING:
-            return "Aucune revue en attente."
-        candidates = [a for a in review["actions"] if a.get("statut") == PENDING]
+        if not review or review.get("status") != PENDING:
+            return "No pending review."
+        candidates = [a for a in review["actions"] if a.get("status") == PENDING]
         chosen = [] if reject_all else [
             a for a in candidates if (only is None or a["n"] in only) and not (skip and a["n"] in skip)
         ]
@@ -209,57 +226,62 @@ class Reviews:
         path = repo.new_worktree(name)
         for action in chosen:
             try:
-                repo.git("cherry-pick", "--allow-empty", "--keep-redundant-commits", action["commit"], cwd=path, author="verificateur")
-                action["statut"] = DONE
+                repo.git(
+                    "cherry-pick", "--allow-empty", "--keep-redundant-commits", action["commit"], cwd=path,
+                    author="curator",
+                )
+                action["status"] = DONE
                 landed.append(action)
             except CommandError:
                 repo.git("cherry-pick", "--abort", cwd=path, check=False)
                 repo.git("reset", "--quiet", "--hard", "HEAD", cwd=path)
-                action["statut"] = "conflit"
+                action["status"] = "conflict"
                 conflicts.append(action)
         for action in refused:
-            action["statut"] = REJECTED
-            append_line(path / ".memex" / "refus.jsonl", json.dumps({
-                "date": iso(), "type": action["type"], "titre": action["titre"], "pages": action.get("pages", []),
+            action["status"] = REJECTED
+            append_line(path / ".memex" / "refusals.jsonl", json.dumps({
+                "date": iso(), "kind": action["kind"], "title": action["title"], "pages": action.get("pages", []),
             }, ensure_ascii=False))
         if landed:
+            loc = i18n.current()
             lines = []
             for action in landed:
-                lines.append(f"{action['type']} : {action['titre']}")
-                lines.extend(f"page supprimée : `{p}` (retrouvable dans l'historique)" for p in action.get("supprimees", []))
-            server._log(path, "vérificateur", f"revue {review['id']} : {len(landed)} action(s) appliquée(s)", lines)
+                lines.append(loc.t("log.action", kind=loc.kinds[action["kind"]], title=action["title"]))
+                lines.extend(loc.t("log.deleted", path=p) for p in action.get("deleted", []))
+            server._log(path, loc.roles["curator"], loc.t("log.review", id=review["id"], count=len(landed)), lines)
         index.write(path, load_wiki(path))
         try:
-            repo.commit_all(path, f"vérificateur : revue {review['id']} ({len(landed)} appliquée(s), {len(refused)} refusée(s))", "verificateur")
+            message = f"curator: review {review['id']} ({len(landed)} applied, {len(refused)} rejected)"
+            repo.commit_all(path, message, "curator")
             repo.land(name)
         except LandConflict as exc:
             repo.drop_worktree(name)
-            return f"Fusion impossible : {exc}"
+            return f"Merge failed: {exc}"
         repo.drop_worktree(name)
         server.sync_out()
-        review["statut"] = DONE if landed else REJECTED
-        review["decide"] = iso()
+        review["status"] = DONE if landed else REJECTED
+        review["decided"] = iso()
         write_json(self._path(review["id"]), review)
-        repo.git("branch", "-D", review.get("branche", ""), check=False)
-        parts = [f"{len(landed)} action(s) appliquée(s)", f"{len(refused)} refusée(s)"]
+        repo.git("branch", "-D", review.get("branch", ""), check=False)
+        parts = [f"{len(landed)} action(s) applied", f"{len(refused)} rejected"]
         if conflicts:
-            parts.append(f"{len(conflicts)} reportée(s) : la page a changé entre-temps")
-        return "Revue " + review["id"] + " : " + ", ".join(parts) + "."
+            parts.append(f"{len(conflicts)} postponed: the page changed in the meantime")
+        return "Review " + review["id"] + ": " + ", ".join(parts) + "."
 
     def expire(self) -> None:
         limit = time.time() - self.config.int("MEMEX_REVIEW_TTL_DAYS") * 86400
         for review in self.all():
-            if review.get("statut") != PENDING:
+            if review.get("status") != PENDING:
                 continue
-            created = parse_ts(review.get("cree"))
+            created = parse_ts(review.get("created"))
             if created and created.timestamp() < limit:
-                review["statut"] = EXPIRED
+                review["status"] = EXPIRED
                 write_json(self._path(review["id"]), review)
-                self.repo.git("branch", "-D", review.get("branche", ""), check=False)
+                self.repo.git("branch", "-D", review.get("branch", ""), check=False)
 
 
 def restore(server: Server, relative: str, rev: str = "") -> str:
-    """Rétablit une page supprimée (ou une version précise) depuis l'historique."""
+    """Brings back a deleted page (or a given version of it) from the history."""
     repo = server.repo
     with file_lock(server.lock_path, wait=True):
         server.sync_in()
@@ -268,21 +290,22 @@ def restore(server: Server, relative: str, rev: str = "") -> str:
             if deleted:
                 rev = f"{deleted}^"
             else:
-                return f"« {relative} » n'a pas été supprimée : précise une version avec --rev."
+                return f'"{relative}" was not deleted: give a version with --rev.'
         content = repo.show(rev, relative)
         if content is None:
-            return f"« {relative} » introuvable dans la version {rev}."
+            return f'"{relative}" not found in version {rev}.'
         name = "restore"
         path = repo.new_worktree(name)
         target = path / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
-        server._log(path, "restauration", relative, [f"version reprise : `{rev}`"])
+        loc = i18n.current()
+        server._log(path, loc.roles["restore"], relative, [loc.t("log.restored", rev=rev)])
         index.write(path, load_wiki(path))
-        repo.commit_all(path, f"restauration : {relative}", "memex")
+        repo.commit_all(path, f"restore: {relative}", "memex")
         try:
             repo.land(name)
         finally:
             repo.drop_worktree(name)
         server.sync_out()
-        return f"« {relative} » rétablie."
+        return f'"{relative}" restored.'

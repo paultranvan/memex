@@ -1,8 +1,8 @@
-"""Le dépôt git du wiki, côté serveur.
+"""The wiki's git repository, server side.
 
-`$MEMEX_HOME/wiki` est un dépôt ordinaire dont `main` est la vérité. Les agents
-ne travaillent jamais dedans : chaque passage se fait dans une copie de travail
-jetable (`git worktree`), validée puis fusionnée en avance rapide.
+`$MEMEX_HOME/wiki` is an ordinary repository whose `main` is the truth. Agents
+never work in it: each run happens in a disposable working copy
+(`git worktree`), validated and then merged as a fast-forward.
 """
 from __future__ import annotations
 
@@ -11,16 +11,19 @@ import shutil
 from pathlib import Path
 from typing import Optional
 
+from . import i18n
 from .config import Config
 from .util import CommandError, run
 
 AUTHORS = {
     "memex": ("memex", "memex@localhost"),
-    "humain": ("humain", "humain@localhost"),
-    "archiviste": ("archiviste", "archiviste@memex"),
-    "tisseur": ("tisseur", "tisseur@memex"),
-    "verificateur": ("vérificateur", "verificateur@memex"),
+    "human": ("human", "human@localhost"),
+    "archivist": ("archivist", "archivist@memex"),
+    "weaver": ("weaver", "weaver@memex"),
+    "curator": ("curator", "curator@memex"),
 }
+PACKAGE = Path(__file__).resolve().parent
+GITIGNORE = ".obsidian/\n.trash/\n.livesync/\n.DS_Store\n.memex-result.json\n.memex-tmp/\n"
 
 
 class LandConflict(RuntimeError):
@@ -33,7 +36,7 @@ class WikiRepo:
         self.dir = config.wiki_repo
         self.work = config.work
 
-    # ── bas niveau ────────────────────────────────────────────────────────
+    # ── low level ─────────────────────────────────────────────────────────
     def git(self, *args: str, cwd: Optional[Path] = None, check: bool = True, author: str = "memex") -> str:
         name, email = AUTHORS.get(author, AUTHORS["memex"])
         env = {
@@ -50,21 +53,26 @@ class WikiRepo:
     def head(self, ref: str = "main", cwd: Optional[Path] = None) -> str:
         return self.git("rev-parse", ref, cwd=cwd)
 
-    # ── création ──────────────────────────────────────────────────────────
-    def init(self, template: Path) -> bool:
+    # ── creation ──────────────────────────────────────────────────────────
+    def init(self, lang: str) -> bool:
         if self.exists():
             return False
+        loc = i18n.get(lang)
+        conventions = (PACKAGE / "wiki_template" / loc.lang / "AGENTS.md").read_bytes()
         self.dir.mkdir(parents=True, exist_ok=True)
         self.git("init", "--quiet", "-b", "main")
         self.git("config", "user.name", "memex")
         self.git("config", "user.email", "memex@localhost")
         self.git("config", "gc.auto", "200")
-        for source in sorted(Path(template).rglob("*")):
-            if source.is_file():
-                target = self.dir / source.relative_to(template)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(source, target)
-        self.commit_all(self.dir, "initialisation du wiki", "memex")
+        (self.dir / "AGENTS.md").write_bytes(conventions)
+        (self.dir / ".gitignore").write_text(GITIGNORE, encoding="utf-8")
+        (self.dir / "log.md").write_text(loc.t("log.header"), encoding="utf-8")
+        (self.dir / ".memex").mkdir(exist_ok=True)
+        (self.dir / ".memex" / "ledger.jsonl").write_text("", encoding="utf-8")
+        (self.dir / ".memex" / "projects.json").write_text("{}\n", encoding="utf-8")
+        (self.dir / ".memex" / "refusals.jsonl").write_text("", encoding="utf-8")
+        i18n.record(self.dir, loc.lang)
+        self.commit_all(self.dir, "wiki initialised", "memex")
         return True
 
     # ── commits ───────────────────────────────────────────────────────────
@@ -79,7 +87,7 @@ class WikiRepo:
         self.git("add", "-A", cwd=cwd)
 
     def changes(self, cwd: Path, base: str) -> list[tuple[str, str]]:
-        """(statut, chemin) entre `base` et l'index de `cwd`. Les renommages sont dépliés."""
+        """(status, path) between `base` and the index of `cwd`. Renames are split into a deletion and an addition."""
         out = self.git("diff", "--cached", "--name-status", "--no-renames", "-z", base, cwd=cwd)
         parts = [part for part in out.split("\0") if part != ""]
         return [(parts[i][0], parts[i + 1]) for i in range(0, len(parts) - 1, 2)]
@@ -91,7 +99,7 @@ class WikiRepo:
             return None
 
     def restore_path(self, cwd: Path, base: str, path: str) -> None:
-        """Remet `path` dans l'état de `base` (y compris s'il n'existait pas)."""
+        """Puts `path` back in the state it has in `base` (including when it did not exist there)."""
         if self.show(base, path, cwd=cwd) is None:
             self.git("rm", "-q", "-f", "--cached", "--ignore-unmatch", "--", path, cwd=cwd)
             target = Path(cwd) / path
@@ -100,7 +108,7 @@ class WikiRepo:
         else:
             self.git("checkout", "-q", base, "--", path, cwd=cwd)
 
-    # ── copies de travail ─────────────────────────────────────────────────
+    # ── working copies ────────────────────────────────────────────────────
     def worktree_path(self, name: str) -> Path:
         return self.work / name
 
@@ -112,7 +120,7 @@ class WikiRepo:
         return path
 
     def heal_worktree(self, path: Path) -> None:
-        """Rétablit le fichier `.git` d'une copie de travail si un agent l'a remplacé ou supprimé."""
+        """Restores the `.git` file of a working copy if an agent replaced or deleted it."""
         path = Path(path)
         link = path / ".git"
         expected = f"gitdir: {self.dir / '.git' / 'worktrees' / path.name}\n"
@@ -137,7 +145,7 @@ class WikiRepo:
             self.git("branch", "-D", f"memex/{name}", check=False)
 
     def land(self, name: str) -> str:
-        """Fusionne la branche d'une copie de travail dans `main`, en avance rapide."""
+        """Merges the branch of a working copy into `main`, as a fast-forward."""
         path = self.worktree_path(name)
         if self.head("main") != self.git("merge-base", "main", "HEAD", cwd=path):
             try:
@@ -152,7 +160,7 @@ class WikiRepo:
         return not self.git("status", "--porcelain")
 
     def reset_main_checkout(self) -> None:
-        """Le dépôt principal ne doit contenir que ce que `main` contient."""
+        """The main repository must hold only what `main` holds."""
         self.git("reset", "--quiet", "--hard", "HEAD")
         self.git("clean", "-fdq")
 

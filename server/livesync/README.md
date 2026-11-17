@@ -1,83 +1,84 @@
-# Vault Obsidian sur le serveur (LiveSync sans écran)
+# Obsidian vault on the server (headless LiveSync)
 
-memex écrit le wiki dans un dossier ordinaire, `MEMEX_VAULT_DIR`. Pour que ce dossier apparaisse
-dans Obsidian sur tes appareils, un client LiveSync en ligne de commande le synchronise avec ta
-base CouchDB, comme le ferait le plugin.
+memex writes the wiki into an ordinary directory, `MEMEX_VAULT_DIR`. For that directory to show up
+in Obsidian on your devices, a command-line LiveSync client synchronises it with your CouchDB
+database, as the plugin would.
 
-> **Non testé.** Cette notice a été écrite sans accès au serveur ni à la base CouchDB. Les commandes
-> ci-dessous viennent de la documentation officielle du client
+> **Not tested.** These instructions were written without access to the server or to the CouchDB
+> database. The commands below come from the client's official documentation
 > ([`src/apps/cli/README.md`](https://github.com/vrtmrz/obsidian-livesync/blob/main/src/apps/cli/README.md)),
-> lue le 2026-11-16. Vérifie-les sur ta version avant de t'y fier.
+> read on 2026-11-16. Check them against your version before relying on them.
 
-## Avant de commencer : un vault séparé
+## Before you start: a separate vault
 
-Ta synchronisation LiveSync est chiffrée de bout en bout. Le client du serveur a besoin de la
-phrase secrète pour lire et écrire. Avec celle de ton vault principal, le serveur pourrait
-déchiffrer toutes tes notes personnelles.
+Your LiveSync synchronisation is end-to-end encrypted. The client on the server needs the
+passphrase to read and write. With the passphrase of your main vault, the server could decrypt
+all your personal notes.
 
-**Recommandation : un vault Obsidian dédié au wiki**, avec sa propre base CouchDB et sa propre
-phrase secrète. Sur tes appareils, tu l'ouvres comme un second vault.
+**Recommendation: an Obsidian vault dedicated to the wiki**, with its own CouchDB database and its
+own passphrase. On your devices, you open it as a second vault.
 
-1. Crée une base CouchDB vide (par exemple `memex-wiki`) et un utilisateur qui n'a accès qu'à elle.
-2. Sur ton poste, crée un vault Obsidian vide, installe le plugin Self-hosted LiveSync, configure-le
-   sur cette base avec une **nouvelle** phrase secrète, puis copie son « Setup URI ».
+1. Create an empty CouchDB database (for example `memex-wiki`) and a user that can access only that
+   database.
+2. On your computer, create an empty Obsidian vault, install the Self-hosted LiveSync plugin, set it
+   up on that database with a **new** passphrase, then copy its "Setup URI".
 
-## Installer le client sur le serveur
+## Installing the client on the server
 
-Le client demande Node.js 22.22 ou plus récent. Debian 12 fournit une version plus ancienne :
-installe Node depuis NodeSource, ou utilise l'image Docker.
+The client requires Node.js 22.22 or later. Debian 12 ships an older version: install Node from
+NodeSource, or use the Docker image.
 
-### Voie 1 : installeur officiel, sous le compte `memex`
+### Option 1: the official installer, under the `memex` account
 
 ```bash
-sudo loginctl enable-linger memex          # ses services tournent sans session ouverte
+sudo loginctl enable-linger memex          # its services run without an open session
 sudo -iu memex
 git clone --depth 1 https://github.com/vrtmrz/obsidian-livesync.git ~/livesync-src
 cd ~/livesync-src
 bash src/apps/cli/deploy/install.sh --user --vault /srv/memex/vault
 ```
 
-L'installeur compile le client, crée la commande `~/.local/bin/livesync-cli` et un service
-utilisateur `livesync-cli.service` qui surveille le dossier et la base en continu.
+The installer builds the client, creates the `~/.local/bin/livesync-cli` command and a user
+service, `livesync-cli.service`, which watches the directory and the database continuously.
 
-### Voie 2 : Docker
+### Option 2: Docker
 
-L'image est `ghcr.io/vrtmrz/livesync-cli`. La base locale du client se monte sur `/data`, le vault
-sur `/vault`. Lance le conteneur sous l'identifiant du compte `memex` (`--user "$(id -u memex)"`),
-sinon les fichiers écrits ne lui appartiendront pas. La commande exacte du mode continu est dans la
-documentation du client, section « Docker ».
+The image is `ghcr.io/vrtmrz/livesync-cli`. The client's local database is mounted on `/data`, the
+vault on `/vault`. Run the container under the user ID of the `memex` account
+(`--user "$(id -u memex)"`), otherwise the files it writes will not belong to that account. The
+exact command for continuous mode is in the client's documentation, in the "Docker" section.
 
-## Configurer la connexion
+## Configuring the connection
 
-Le client lit `.livesync/settings.json` dans son dossier de base. Deux façons de le remplir :
+The client reads `.livesync/settings.json` in its base directory. There are two ways to fill it in:
 
-- appliquer le Setup URI copié depuis ton poste (commande `setup` du client) ;
-- ou écrire le fichier à la main, à partir de [`settings.example.json`](settings.example.json).
+- apply the Setup URI copied from your computer (the client's `setup` command);
+- or write the file by hand, starting from [`settings.example.json`](settings.example.json).
 
-Protège ce fichier : il contient le mot de passe CouchDB et la phrase secrète.
+Protect this file: it contains the CouchDB password and the passphrase.
 
 ```bash
 chmod 600 /srv/memex/vault/.livesync/settings.json
 ```
 
-## Brancher memex
+## Connecting memex
 
-Dans `/etc/memex/memex.env` :
+In `/etc/memex/memex.env`:
 
 ```
 MEMEX_VAULT_DIR=/srv/memex/vault
 ```
 
-Puis `sudo systemctl start memex-run.service`. memex exporte le wiki dans le dossier ; le client
-l'envoie à CouchDB ; tes appareils le reçoivent.
+Then `sudo systemctl start memex-run.service`. memex exports the wiki into the directory; the client
+sends it to CouchDB; your devices receive it.
 
-## Ce qu'il faut savoir
+## What you should know
 
-- **Fichiers cachés.** Le client ignore les entrées cachées, donc `.livesync/` et `.obsidian/` ne
-  voyagent pas. memex n'écrit rien de caché dans le vault : ni `.git`, ni `.memex`.
-- **Modifications depuis Obsidian.** Elles arrivent dans le dossier du vault, et memex les reprend
-  dans le wiki à son passage suivant (toutes les 15 minutes au plus), sous l'auteur « humain ».
-  Si un agent a modifié la même page entre-temps, c'est ta version qui gagne.
-- **`index.md` et `log.md`** sont régénérés par memex : une modification à la main y est écrasée.
-- **Sans LiveSync**, memex fonctionne quand même. Tu lis alors le wiki par la copie de tes hôtes
-  (`~/.local/share/memex/wiki`), que tu peux ouvrir comme vault Obsidian en lecture.
+- **Hidden files.** The client ignores hidden entries, so `.livesync/` and `.obsidian/` do not
+  travel. memex writes nothing hidden into the vault: neither `.git` nor `.memex`.
+- **Edits made in Obsidian.** They arrive in the vault directory, and memex brings them into the
+  wiki on its next run (every 15 minutes at most), under the author `human`.
+  If an agent changed the same page in the meantime, your version wins.
+- **`index.md` and `log.md`** are regenerated by memex: an edit made by hand there is overwritten.
+- **Without LiveSync**, memex still works. You then read the wiki through the copy on your hosts
+  (`~/.local/share/memex/wiki`), which you can open as a read-only Obsidian vault.

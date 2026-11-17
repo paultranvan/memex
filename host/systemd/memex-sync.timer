@@ -1,5 +1,5 @@
 [Unit]
-Description=memex : synchronisation périodique
+Description=memex: periodic synchronisation
 
 [Timer]
 OnBootSec=2min

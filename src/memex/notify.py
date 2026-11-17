@@ -1,7 +1,7 @@
-"""Notifications : une commande shell configurable, qui reçoit le message sur son entrée.
+"""Notifications: a configurable shell command, which receives the message on its standard input.
 
-Exemple avec Hermes : MEMEX_NOTIFY_CMD='hermes send --to telegram --subject "$MEMEX_SUBJECT" --file -'
-Sans commande configurée, le message est seulement écrit dans les journaux.
+Example with Hermes: MEMEX_NOTIFY_CMD='hermes send --to telegram --subject "$MEMEX_SUBJECT" --file -'
+With no command configured, the message is only written to the logs.
 """
 from __future__ import annotations
 
@@ -25,9 +25,9 @@ def notify(config: Config, subject: str, body: str) -> bool:
     try:
         proc = subprocess.run(["sh", "-c", command], input=body, text=True, env=env, capture_output=True, timeout=60)
     except (OSError, subprocess.TimeoutExpired) as exc:
-        eprint(f"memex : notification impossible ({exc})")
+        eprint(f"memex: could not send the notification ({exc})")
         return False
     if proc.returncode != 0:
-        eprint(f"memex : la commande de notification a échoué ({proc.returncode}) : {proc.stderr.strip()[-200:]}")
+        eprint(f"memex: the notification command failed ({proc.returncode}): {proc.stderr.strip()[-200:]}")
         return False
     return True

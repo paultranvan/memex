@@ -26,11 +26,11 @@ Tu es le vérificateur d'un wiki personnel en markdown. Le répertoire courant e
 
 Lis les pages modifiées et leurs voisines, puis cherche :
 
-- `fusion` : deux pages sur le même sujet, ou un même fait répété dans plusieurs pages.
-- `condensation` : une page vivante trop longue, répétitive, ou qui raconte l'historique au lieu de dire l'état actuel.
-- `correction` : une page qui en contredit une autre plus récente, une page vivante qui ne reflète plus les décisions actives, un en-tête incomplet.
-- `suppression` : une page sans contenu propre, entièrement reprise ailleurs.
-- `rangement` : une page dans le mauvais dossier.
+- `merge` : deux pages sur le même sujet, ou un même fait répété dans plusieurs pages.
+- `condense` : une page vivante trop longue, répétitive, ou qui raconte l'historique au lieu de dire l'état actuel.
+- `fix` : une page qui en contredit une autre plus récente, une page vivante qui ne reflète plus les décisions actives, un en-tête incomplet.
+- `delete` : une page sans contenu propre, entièrement reprise ailleurs.
+- `move` : une page dans le mauvais dossier.
 
 Si une contradiction ne peut pas être tranchée à partir du wiki, ne propose pas d'action : pose la question.
 
@@ -48,15 +48,15 @@ Si une contradiction ne peut pas être tranchée à partir du wiki, ne propose p
 {
   "actions": [
     {
-      "type": "fusion | condensation | correction | suppression | rangement",
-      "titre": "Ce que fait l'action, en une ligne",
+      "kind": "merge | condense | fix | delete | move",
+      "title": "Ce que fait l'action, en une ligne",
       "pages": ["Chemin/De/La page.md"],
-      "raison": "Pourquoi, en une ou deux phrases compréhensibles sans ouvrir les pages",
-      "consigne": "Ce qu'il faut faire précisément : quoi garder, quoi déplacer et où, quoi retirer"
+      "reason": "Pourquoi, en une ou deux phrases compréhensibles sans ouvrir les pages",
+      "instruction": "Ce qu'il faut faire précisément : quoi garder, quoi déplacer et où, quoi retirer"
     }
   ],
   "questions": [
-    {"titre": "La question, en une ligne", "detail": "Les deux versions qui se contredisent, avec leurs pages"}
+    {"title": "La question, en une ligne", "detail": "Les deux versions qui se contredisent, avec leurs pages"}
   ]
 }
 ```

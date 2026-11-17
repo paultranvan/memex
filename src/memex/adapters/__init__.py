@@ -1,4 +1,4 @@
-"""Adaptateurs : chaque source de sessions expose `discover()` et `read()`."""
+"""Adapters: each source of sessions exposes `discover()` and `read()`."""
 from __future__ import annotations
 
 import re
@@ -9,7 +9,7 @@ from typing import Any, Iterator, Optional
 from .. import PIPELINE_SENTINEL
 from ..segment import Chunk, Message
 
-# Blocs injectés par les harnais dans les messages « utilisateur » : pas des paroles humaines.
+# Blocks injected by the harnesses into "user" messages: not human words.
 _WRAPPED = re.compile(
     r"<(system-reminder|local-command-caveat|command-name|command-message|command-args|"
     r"local-command-stdout|local-command-stderr|task-notification|user-prompt-submit-hook|"
@@ -56,10 +56,10 @@ class Adapter:
 
 
 def mark_final(events: list[tuple]) -> list[Message]:
-    """Transforme une suite d'événements en messages.
+    """Turns a sequence of events into messages.
 
-    Un texte d'assistant est « intermédiaire » s'il est suivi d'un appel d'outil
-    avant la prochaine parole humaine : c'est en général de la narration.
+    An assistant text is "interim" if it is followed by a tool call before the
+    next human message: it is usually narration.
     """
     messages: list[Message] = []
     for index, event in enumerate(events):

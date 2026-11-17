@@ -1,9 +1,9 @@
-"""Hooks de session, communs à Claude Code et Codex.
+"""Session hooks, shared by Claude Code and Codex.
 
-`session-start` : imprime la page vivante du projet courant (elle entre dans le
-contexte de l'agent) et lance une synchronisation en arrière-plan, sans jamais
-faire attendre la session. `session-end` : force le balayage de la session qui
-vient de se terminer, pour que le wiki soit à jour quelques minutes plus tard.
+`session-start`: prints the living page of the current project (it enters the
+agent's context) and starts a sync in the background, without ever making the
+session wait. `session-end`: forces the sweep of the session that has just
+ended, so that the wiki is up to date a few minutes later.
 """
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ import sys
 import time
 from pathlib import Path
 
+from . import i18n
 from .config import Config
 from .pages import parse_page
 from .project import ProjectResolver
@@ -54,25 +55,26 @@ def project_context(config: Config, cwd: str) -> str:
     project = ProjectResolver().resolve(cwd)
     if not project or not isinstance(mapping, dict):
         return ""
-    dossier = mapping.get(project.remote) or mapping.get(project.slug)
-    if not dossier:
+    folder = mapping.get(project.remote) or mapping.get(project.slug)
+    if not folder:
         return ""
-    name = dossier.split("/")[-1]
+    name = folder.split("/")[-1]
+    i18n.use_for(clone, config.get("MEMEX_LANG"))
     try:
-        page = parse_page(f"{dossier}/{name}.md", (clone / dossier / f"{name}.md").read_text(encoding="utf-8"))
+        page = parse_page(f"{folder}/{name}.md", (clone / folder / f"{name}.md").read_text(encoding="utf-8"))
     except OSError:
         return ""
     limit = max(config.int("MEMEX_HOOK_MAX_CHARS"), 800)
     footer = (
-        f"\n\n---\nSource : wiki memex, en lecture seule ({tilde(clone)}). Page de ce projet : `{dossier}/{name}.md` ; "
-        f"fiches de décision détaillées : `{dossier}/Décisions/`. Index de tout le wiki : `index.md`. "
-        "Ce qui sera décidé dans cette session y sera reporté automatiquement."
+        f"\n\n---\nSource: memex wiki, read-only ({tilde(clone)}). This project's page: `{folder}/{name}.md`; "
+        f"detailed decision records: `{folder}/{i18n.current().decisions}/`. Index of the whole wiki: `index.md`. "
+        "What is decided in this session will be recorded there automatically."
     )
-    header = f"# Mémoire du projet « {page.title} » (issue des sessions précédentes)\n\n"
+    header = f'# Memory of project "{page.title}" (from earlier sessions)\n\n'
     body = page.body.strip()
     room = limit - len(header) - len(footer)
     if len(body) > room:
-        body = body[:room].rsplit("\n", 1)[0] + "\n\n[… page tronquée : lis le fichier pour la suite …]"
+        body = body[:room].rsplit("\n", 1)[0] + "\n\n[… page truncated: read the file for the rest …]"
     return header + body + footer
 
 
@@ -82,7 +84,7 @@ def session_start(config: Config, raw: str) -> str:
     try:
         return project_context(config, str(data.get("cwd") or os.getcwd()))
     except Exception:
-        return ""  # un hook ne doit jamais gêner l'ouverture d'une session
+        return ""  # a hook must never get in the way of a session starting
 
 
 def session_end(config: Config, raw: str) -> None:
