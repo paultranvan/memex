@@ -965,6 +965,82 @@ class Hooks(Sandbox):
         self.assertLess(context.count("A line of the living page."), 60)
         self.assertEqual(hook.project_context(self.config, str(self.make_repo("unknown"))), "")
 
+    def linked_wiki(self):
+        repo = self.make_repo("solitaire", "git@github.com:me/solitaire.git")
+        write_pages(self.config.wiki_clone, {
+            ".memex/projects.json": json.dumps({"github.com/me/solitaire": "Projects/Solitaire"}),
+            "Projects/Solitaire/Solitaire.md": (
+                "---\ntype: project\ntitle: Solitaire\n---\n\nHosted like [[Topics/Hosting/Hosting|the other games]]. "
+                "Scores have [[Projects/Solitaire/Scores|their own page]].\n"
+            ),
+            "Projects/Solitaire/Scores.md": "---\ntype: project\ntitle: Scores\nsummary: How scores are kept.\n---\n\nStored in [[Concepts/SQLite]].\n",
+            "Projects/Solitaire/Decisions/2026-11-12 Dark theme.md": (
+                "---\ntype: decision\ntitle: Dark theme\ndate: 2026-11-12\n---\n\nThe same as [[Projects/Chess/Chess|Chess]].\n"
+            ),
+            "Topics/Hosting/Hosting.md": (
+                "---\ntype: topic\ntitle: Hosting\nsummary: Where the games are hosted" + " and how each machine is set up" * 8
+                + ".\n---\n\nText.\n"
+            ),
+            "Concepts/SQLite.md": (
+                "---\ntype: concept\ntitle: SQLite\nsummary: An embedded database.\n---\n\n"
+                "Used by [[Projects/Solitaire/Solitaire|Solitaire]] for [[Projects/Solitaire/Scores|its scores]].\n"
+            ),
+            "Concepts/systemd.md": (
+                "---\ntype: concept\ntitle: systemd\nsummary: Runs the services.\n---\n\n[[Projects/Solitaire/Solitaire|Solitaire]] has a unit.\n"
+            ),
+            "Projects/Chess/Chess.md": "---\ntype: project\ntitle: Chess\n---\n\nAnother game.\n",
+            "Topics/Cooking/Cooking.md": "---\ntype: topic\ntitle: Cooking\nsummary: Unrelated.\n---\n\nSee [[Topics/Hosting/Hosting|hosting]].\n",
+            "Journal/2026/2026-11-12.md": "---\ntype: journal\n---\n\n- [[Projects/Solitaire/Solitaire|Solitaire]]: a session.\n",
+        })
+        return repo
+
+    def test_context_lists_the_pages_linked_with_the_project_in_either_direction(self):
+        repo = self.linked_wiki()
+        context = hook.project_context(self.config, str(repo))
+        page, _, rest = context.partition("\n\n---\n")
+        self.assertTrue(page.endswith("Scores have [[Projects/Solitaire/Scores|their own page]]."))
+        block, _, source = rest.partition("\n\nSource: memex wiki, read-only (")
+        self.assertTrue(source)
+        lines = block.splitlines()
+        # The most linked first (SQLite: one link out, two in), then by path. The pages of the folder
+        # itself, the journal and a page two links away are not listed.
+        self.assertEqual(lines[:4], [
+            "Related pages elsewhere in the wiki (not loaded: read the ones this session needs):",
+            "- `Concepts/SQLite.md` — An embedded database.",
+            "- `Concepts/systemd.md` — Runs the services.",
+            "- `Projects/Chess/Chess.md` — Chess",                    # no summary: the title
+        ])
+        self.assertEqual(len(lines), 5)
+        prefix = "- `Topics/Hosting/Hosting.md` — Where the games are hosted and how each machine is set up and how"
+        self.assertTrue(lines[4].startswith(prefix))
+        self.assertTrue(lines[4].endswith("…"))                         # a long summary is cut between two words
+        self.assertLessEqual(len(lines[4]), len("- `Topics/Hosting/Hosting.md` — ") + hook.RELATED_SUMMARY + 1)
+
+    def test_related_pages_are_capped_by_count_and_by_room_and_can_be_turned_off(self):
+        repo = self.linked_wiki()
+        self.set(MEMEX_HOOK_RELATED="1")
+        self.assertIn(
+            ":\n- `Concepts/SQLite.md` — An embedded database.\n"
+            "- … and 3 more: search the wiki for links to `Projects/Solitaire`\n\nSource: memex wiki",
+            hook.project_context(self.config, str(repo)),
+        )
+        # A third of the room at most: here 300 characters, which the long fourth line does not fit in.
+        self.set(MEMEX_HOOK_RELATED="8", MEMEX_HOOK_MAX_CHARS="900")
+        context = hook.project_context(self.config, str(repo))
+        self.assertIn("- `Projects/Chess/Chess.md` — Chess\n- … and 1 more: search the wiki for links to `Projects/Solitaire`\n\nSource", context)
+        self.assertNotIn("Topics/Hosting/Hosting.md", context)
+        self.set(MEMEX_HOOK_RELATED="0")
+        context = hook.project_context(self.config, str(repo))
+        self.assertNotIn("Related pages", context)
+        self.assertIn("their own page]].\n\n---\nSource: memex wiki, read-only (", context)
+
+    def test_a_wiki_that_cannot_be_read_still_gives_the_project_page(self):
+        repo = self.linked_wiki()
+        with mock.patch.object(hook, "load_wiki", side_effect=RuntimeError("unreadable")):
+            context = hook.project_context(self.config, str(repo))
+        self.assertIn("Hosted like", context)
+        self.assertNotIn("Related pages", context)
+
 
 class Isolation(Sandbox):
     """The sandbox itself: nothing may reach the real configuration, sessions or wiki of whoever runs the tests."""

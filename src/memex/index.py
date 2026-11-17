@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import i18n
-from .pages import Page, content_pages, wikilink
+from .pages import LinkIndex, Page, content_pages, links, wikilink
 from .util import atomic_write
 
 
@@ -84,6 +84,29 @@ def write(root: Path, pages: dict[str, Page]) -> bool:
         pass
     atomic_write(target, text)
     return True
+
+
+def related(pages: dict[str, Page], folder: str) -> list[Page]:
+    """Pages outside `folder` that are linked with it, in either direction, the most linked first.
+
+    Journal pages are left out: they link to every folder by construction.
+    """
+    loc = i18n.current()
+    resolve = LinkIndex(list(pages)).resolve
+    pages = content_pages(pages)
+    inside = {path for path, page in pages.items() if page.folder == folder}
+    weight: dict[str, int] = {}
+    for path, page in pages.items():
+        if path.split("/")[0] == loc.journal:
+            continue
+        targets = {resolve(target) for target, _ in links(page.body)}
+        if path in inside:
+            for target in targets - inside:
+                if target in pages and target.split("/")[0] != loc.journal:
+                    weight[target] = weight.get(target, 0) + 1
+        elif targets & inside:
+            weight[path] = weight.get(path, 0) + len(targets & inside)
+    return [pages[path] for path in sorted(weight, key=lambda p: (-weight[p], p.lower()))]
 
 
 def compact(pages: dict[str, Page], limit: int = 12000, long_page: int = 0) -> str:

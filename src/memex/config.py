@@ -46,6 +46,7 @@ DEFAULTS: dict[str, str] = {
     "MEMEX_BACKUP_KEEP": "7",
     # ── host: reading by the agents ───────────────────────────────────────
     "MEMEX_HOOK_MAX_CHARS": "6000",
+    "MEMEX_HOOK_RELATED": "8",
     # ── server ────────────────────────────────────────────────────────────
     "MEMEX_HOME": "/srv/memex",
     "MEMEX_VAULT_DIR": "",

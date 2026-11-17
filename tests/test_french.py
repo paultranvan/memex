@@ -147,6 +147,11 @@ class FrenchEndToEnd(Sandbox):
             self.assertIn('# Memory of project "Solitaire" (from earlier sessions)', context)
             self.assertIn("Scores côté serveur", context)
             self.assertIn("detailed decision records: `Projets/Solitaire/Décisions/`", context)
+            self.assertIn(                              # the pages the weaver linked with the project, not loaded
+                "\n\n---\nRelated pages elsewhere in the wiki (not loaded: read the ones this session needs):\n"
+                "- `Concepts/Tailscale.md` — Notion shared by 2 folders.\n- `Projets/Atlas/Atlas.md` — Page of Atlas.\n\n"
+                "Source: memex wiki, read-only (", context,
+            )
 
         with self.subTest("curator, review and restore"):
             write_pages(self.vault, {"Sujets/Duplicate/Duplicate.md": "---\ntype: sujet\ntitre: Doublon\nresume: Page en double.\n---\n\nCopie.\n"})

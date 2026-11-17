@@ -77,7 +77,7 @@ unattended requires them.
 | Bookkeeping | The LLM updates `index.md` and `log.md` | Code generates the index, log, journal and provenance; the LLM only writes pages |
 | History of choices | Not covered | Immutable, dated decision records; a changed decision gets a new record |
 | Secrets | Not covered | Known secret patterns are redacted on the work machine, before anything leaves it |
-| Reading it back | You query the wiki through the LLM | Your coding agents get the project's page at session start and consult the wiki themselves |
+| Reading it back | You query the wiki through the LLM | Your coding agents get the project's page at session start, with the list of the pages linked to it, and consult the wiki themselves |
 
 What the pattern covers and memex does not:
 

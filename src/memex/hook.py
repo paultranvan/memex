@@ -1,8 +1,8 @@
 """Session hooks, shared by Claude Code and Codex.
 
-`session-start`: prints the living page of the current project (it enters the
-agent's context) and starts a sync in the background, without ever making the
-session wait. `session-end`: forces the sweep of the session that has just
+`session-start`: prints the living page of the current project and the list of
+the pages linked with it (both enter the agent's context) and starts a sync in
+the background, without ever making the session wait. `session-end`: forces the sweep of the session that has just
 ended, so that the wiki is up to date a few minutes later.
 """
 from __future__ import annotations
@@ -14,9 +14,9 @@ import sys
 import time
 from pathlib import Path
 
-from . import i18n
+from . import i18n, index
 from .config import Config
-from .pages import parse_page
+from .pages import Page, load_wiki, parse_page
 from .project import ProjectResolver
 from .util import read_json, tilde
 
@@ -49,6 +49,30 @@ def spawn_sync(config: Config, sessions: tuple[str, ...] = (), throttle: bool = 
     return True
 
 
+RELATED_HEADER = "Related pages elsewhere in the wiki (not loaded: read the ones this session needs):"
+RELATED_SUMMARY = 160  # characters kept of each summary
+
+
+def related_block(pages: dict[str, Page], folder: str, count: int, budget: int) -> str:
+    """One line per page linked with the folder: its path and its summary. The pages themselves are not loaded."""
+    found = index.related(pages, folder)
+    lines, size = [], len(RELATED_HEADER)
+    for page in found[:max(count, 0)]:
+        text = page.summary or page.title
+        if len(text) > RELATED_SUMMARY:
+            text = text[:RELATED_SUMMARY].rsplit(" ", 1)[0] + "…"
+        line = f"- `{page.path}` — {text}"
+        if size + len(line) + 1 > budget:
+            break
+        lines.append(line)
+        size += len(line) + 1
+    if not lines:
+        return ""
+    if len(found) > len(lines):
+        lines.append(f"- … and {len(found) - len(lines)} more: search the wiki for links to `{folder}`")
+    return "\n".join([RELATED_HEADER, *lines]) + "\n\n"
+
+
 def project_context(config: Config, cwd: str) -> str:
     clone = config.wiki_clone
     mapping = read_json(clone / ".memex" / "projects.json", {}) or {}
@@ -65,14 +89,22 @@ def project_context(config: Config, cwd: str) -> str:
     except OSError:
         return ""
     limit = max(config.int("MEMEX_HOOK_MAX_CHARS"), 800)
+    related = ""
+    if config.int("MEMEX_HOOK_RELATED") > 0:
+        try:
+            # At most a third of the room: the project's own page comes first.
+            related = related_block(load_wiki(clone), folder, config.int("MEMEX_HOOK_RELATED"), limit // 3)
+        except Exception:
+            related = ""  # the page matters more than its neighbours
     footer = (
-        f"\n\n---\nSource: memex wiki, read-only ({tilde(clone)}). This project's page: `{folder}/{name}.md`; "
+        f"\n\n---\n{related}"
+        f"Source: memex wiki, read-only ({tilde(clone)}). This project's page: `{folder}/{name}.md`; "
         f"detailed decision records: `{folder}/{i18n.current().decisions}/`. Index of the whole wiki: `index.md`. "
         "What is decided in this session will be recorded there automatically."
     )
     header = f'# Memory of project "{page.title}" (from earlier sessions)\n\n'
     body = page.body.strip()
-    room = limit - len(header) - len(footer)
+    room = max(limit - len(header) - len(footer), 0)
     if len(body) > room:
         body = body[:room].rsplit("\n", 1)[0] + "\n\n[… page truncated: read the file for the rest …]"
     return header + body + footer

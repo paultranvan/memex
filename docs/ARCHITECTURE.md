@@ -56,7 +56,7 @@ Two rules hold the whole thing together:
 5. The **weaver** links the pages that were touched and maintains the cross-cutting pages.
 6. The wiki is exported to the vault folder; LiveSync pushes it to your devices.
 7. The next time a session starts in that project, the **session-start hook** injects the
-   project's page into the agent's context.
+   project's page into the agent's context, followed by the list of the pages linked with it.
 
 A few minutes pass between the end of a session and the update of the wiki.
 
@@ -104,7 +104,9 @@ backup from which the server can be rebuilt.
 - **A pointer** in `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`: where the wiki is, when to
   consult it, never to write to it.
 - **An injection at start-up**: if the session opens in a project the wiki knows, its living page
-  is printed by the hook and enters the context (6,000 characters at most).
+  is printed by the hook and enters the context (6,000 characters at most). Under it, the hook
+  lists the pages elsewhere in the wiki that are linked with the project, in either direction:
+  their path and their one-line summary, not their content. The agent reads the ones it needs.
 - **A read rule** in Claude Code's permissions, for the wiki folder.
 
 The agents on the hosts only read. What they learn comes back through the segments. To record
@@ -454,6 +456,20 @@ possible later.
 **D30 — Instant session-start hook, synchronisation in the background.**
 *Why:* opening a session must never wait for the network.
 
+**D42 — The hook lists the pages linked with the project, without loading them.**
+The project's page says which pages it points to, but not which pages point to it: a concept page
+that describes how three projects use a tool was invisible from each of them. The hook now lists
+every page outside the project's folder that is linked with it in either direction, the most
+linked first, with its summary (`MEMEX_HOOK_RELATED`, 8 by default, a third of the injected text
+at most). Journal pages are left out: they link to every project by construction.
+*Why a list and not the content:* loading the neighbours would multiply what every session pays
+for, whatever it is about. One line is enough for the agent to know the page exists and to decide.
+*Why links and not mentions:* a link was checked by an agent when it was written. A bare mention
+of the project's name may be about something else, and the ones still unlinked after the weaver
+has run are mostly the ones it turned down.
+*Cost:* the list is computed from the local copy when the session starts, with no network and no
+LLM: under 0.1 s for a wiki of 80 pages, about 0.5 s for 2,000 pages (measured 2026-11-17).
+
 **D31 — The vault is an ordinary folder, tied to the repository by a manifest.**
 *Why:* no git file must go through LiveSync, and your edits in Obsidian must come back. In a
 conflict, you win.
@@ -505,7 +521,7 @@ and a conventions file.
 
 **Verified on the author's machine (2026-11-16):**
 
-- 117 automated tests, including 29 end-to-end scenarios (nominal path, session continuations,
+- 120 automated tests, including 29 end-to-end scenarios (nominal path, session continuations,
   guardrails, quarantine, agent outage, review, restore, rebuild, forged segment), on an English wiki
   and on a French one.
 - An independent review of the code by a second agent, which reproduced five defects (including a
@@ -520,6 +536,9 @@ and a conventions file.
 - A full backfill of the author's history (2026-11-16): 66 segments processed in 31 minutes with
   Claude as the agent, inside the sandbox, under the systemd user units: no failure, nothing
   quarantined, 71 pages. Then the weaver and the curator on that wiki (five actions proposed).
+- The list of related pages printed by the session-start hook, on that wiki (2026-11-17): three to
+  seven pages per project, 0.09 s added to the start of a session. Whether agents make good use
+  of the list has not been measured.
 - The three harnesses (Hermes, Claude Code, Codex), at the three permission levels, in the sandbox.
 - The exclusion of the pipeline's own sessions, on Hermes's real database.
 - The SSH gate against a real `sshd`: shell, arbitrary command, other repository and writing all
