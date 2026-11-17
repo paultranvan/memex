@@ -133,3 +133,18 @@ make test
 
 No dependency beyond Python 3.9 or later and git. The sandbox tests are skipped on a machine without
 `bubblewrap`.
+
+## Licence
+
+Copyright (C) 2026 Paul Tran-Van
+
+memex is free software: you can redistribute it and/or modify it under the terms of the
+[GNU Affero General Public License](LICENSE) as published by the Free Software Foundation, either
+version 3 of the License, or (at your option) any later version (SPDX: `AGPL-3.0-or-later`). It is
+distributed in the hope that it will be useful, but without any warranty; see the licence for details.
+
+The licence covers memex, not what it produces: your wiki is yours. Three pieces of memex end up in
+your own files: the conventions file of a new wiki (`src/memex/wiki_template/`), the configuration
+template (`config/memex.env.example`) and the pointer block the host installer adds to your agents'
+instruction files. As an additional permission under section 7 of the licence, you may use, modify
+and redistribute those three without restriction.
