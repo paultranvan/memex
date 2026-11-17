@@ -25,6 +25,18 @@ def main_page(folder: str, pages: dict[str, Page]) -> Page | None:
     return roots[0] if roots else None
 
 
+def living_pages(pages: dict[str, Page]) -> set[str]:
+    """Paths of the living pages: the main page of each project and of each topic."""
+    loc = i18n.current()
+    found = set()
+    for top in (loc.projects, loc.topics):
+        for folder in folders(pages, top):
+            main = main_page(folder, pages)
+            if main:
+                found.add(main.path)
+    return found
+
+
 def folders(pages: dict[str, Page], top: str) -> list[str]:
     return sorted({p.folder for p in pages.values() if p.path.split("/")[0] == top and p.folder}, key=str.lower)
 
@@ -109,17 +121,19 @@ def related(pages: dict[str, Page], folder: str) -> list[Page]:
     return [pages[path] for path in sorted(weight, key=lambda p: (-weight[p], p.lower()))]
 
 
-def compact(pages: dict[str, Page], limit: int = 12000, long_page: int = 0) -> str:
+def compact(pages: dict[str, Page], limit: int = 12000, long_page: int = 0, long_living: int = 0) -> str:
     """Short list of the pages (path, title, summary) given to the agents to find their way around.
 
-    `long_page`: above this size, the page is flagged as already long.
+    Above `long_living` for a living page and `long_page` for any other, the page is flagged as already long.
     """
     loc = i18n.current()
+    living = living_pages(content_pages(pages)) if long_living else set()
     lines = []
     for path, page in sorted(content_pages(pages).items()):
         if page.is_decision:
             continue
-        size = loc.t("compact.long", count=len(page.body)) if long_page and len(page.body) > long_page else ""
+        threshold = long_living if path in living else long_page
+        size = loc.t("compact.long", count=len(page.body)) if threshold and len(page.body) > threshold else ""
         summary = loc.t("compact.summary", summary=page.summary) if page.summary else ""
         lines.append(f"- {path} — {page.title}{size}{summary}")
     for folder in sorted({p.folder for p in content_pages(pages).values() if p.is_decision}):

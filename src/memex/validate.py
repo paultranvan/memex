@@ -121,7 +121,11 @@ def _fix_names(repo: WikiRepo, cwd: Path, base: str, verdict: Verdict) -> None:
     repo.stage_all(cwd)
 
 
-def validate(repo: WikiRepo, cwd: Path, base: str, role: str, today: str, max_page_chars: int = 24000) -> Verdict:
+def validate(
+    repo: WikiRepo, cwd: Path, base: str, role: str, today: str, max_page_chars: int = 12000,
+    links_only: bool = False,
+) -> Verdict:
+    """`links_only`: the curator applies a `link` action, which may change links and nothing else."""
     assert role in ROLES
     loc = i18n.current()
     verdict = Verdict()
@@ -186,6 +190,18 @@ def validate(repo: WikiRepo, cwd: Path, base: str, role: str, today: str, max_pa
             if existing_decision:
                 verdict.errors.append(f"{path}: a decision record cannot be changed or deleted")
                 continue
+            if links_only:
+                if status != "M":
+                    verdict.errors.append(f"{path}: a `link` action neither creates nor deletes a page")
+                    continue
+                old = repo.show(base, path, cwd=cwd) or ""
+                new = (cwd / path).read_text(encoding="utf-8")
+                if normalize_for_links(old) != normalize_for_links(new):
+                    verdict.errors.append(
+                        f"{path}: a `link` action changed the text; it may only change links "
+                        f"and the \"{loc.see_also}\" section"
+                    )
+                    continue
 
         if status == "D":
             verdict.deleted.append(path)

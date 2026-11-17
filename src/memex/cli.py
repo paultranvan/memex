@@ -167,7 +167,7 @@ def cmd_doctor(config: Config) -> int:
 # ── server ────────────────────────────────────────────────────────────────
 def cmd_server(config: Config, args: argparse.Namespace) -> int:
     from . import serverops
-    from .lint import lint, summary
+    from .lint import lint_wiki, summary
     from .pipeline import Server
     from .review import Reviews, restore
 
@@ -223,7 +223,7 @@ def cmd_server(config: Config, args: argparse.Namespace) -> int:
             print(serverops.device_add(config, args.name, " ".join(args.key)))
         return 0
     if command == "lint":
-        report = lint(config.wiki_repo, config.int("MEMEX_MAX_PAGE_CHARS"), config.int("MEMEX_WEAVER_MIN_FOLDERS"))
+        report = lint_wiki(config, config.wiki_repo)
         print(summary(report))
         print(json.dumps(report.as_dict(), ensure_ascii=False, indent=1))
         return 0

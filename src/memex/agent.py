@@ -9,7 +9,8 @@ runs a shell command. Three permission levels:
 
 Variables passed to the command: MEMEX_PROMPT_FILE, MEMEX_OUT_FILE (the final
 reply, if the harness can write it), MEMEX_MODEL, MEMEX_ROLE (extract,
-integrate, weave, diagnose, apply or probe) and MEMEX_LANG (the wiki language).
+integrate, weave, diagnose, links, apply or probe) and MEMEX_LANG (the wiki
+language).
 """
 from __future__ import annotations
 

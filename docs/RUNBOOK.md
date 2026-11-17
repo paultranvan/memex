@@ -176,6 +176,7 @@ Every week, if it has something to propose, you receive a numbered list:
 1. [merge] Merge Brokers.md into Savings plan.md
    Why: both compare the same brokers.
 2. [condense] Condense Solitaire.md
+3. [link] Link Atlas to the page on the hosting it shares with Solitaire
 ? To decide: is the deployment of Atlas manual or scripted?
 ```
 
@@ -198,7 +199,10 @@ review expires after ten days and the curator starts again from scratch.
 | What the archivist retains | `MEMEX_PROMPTS_DIR`: copy `src/memex/prompts/<lang>/` and adapt `extract.md` |
 | The threshold below which sessions are ignored | `MEMEX_MIN_USER_CHARS` |
 | The sensitivity of the weaver | `MEMEX_WEAVER_MIN_PAGES`, `MEMEX_WEAVER_MIN_FOLDERS`, `MEMEX_WEAVER=0` |
+| How long a page may get | `MEMEX_LIVING_PAGE_CHARS` (the main page of a folder), `MEMEX_MAX_PAGE_CHARS` (the others) |
+| What a session receives when it starts | `MEMEX_HOOK_MAX_CHARS`, `MEMEX_HOOK_RELATED` |
 | The number of actions per review | `MEMEX_CURATOR_MAX_ACTIONS` |
+| How many folders have their links checked per review | `MEMEX_CURATOR_LINK_FOLDERS` |
 | The curator's day | `server/install.sh --curate "Sun *-*-* 05:00:00"` |
 | The model | `MEMEX_AGENT_MODEL` |
 | The harness | `MEMEX_AGENT`, or `MEMEX_AGENT_EXTRACT_CMD` / `_READ_CMD` / `_EDIT_CMD` |

@@ -75,7 +75,9 @@ EN = Locale(
     },
     statuses={"active": "active", "superseded": "superseded", "abandoned": "abandoned"},
     roles={"archivist": "archivist", "weaver": "weaver", "curator": "curator", "restore": "restore"},
-    kinds={"merge": "merge", "condense": "condense", "fix": "fix", "delete": "delete", "move": "move"},
+    kinds={
+        "merge": "merge", "condense": "condense", "fix": "fix", "delete": "delete", "move": "move", "link": "links",
+    },
     see_also="See also",
     strings={
         # ── written into the wiki ──
@@ -133,6 +135,13 @@ EN = Locale(
         "retry.weaver": (
             "\n\n## Your previous attempt was rejected\n\n{feedback}\n\nStart again and respect these points."
         ),
+        "retry.curator": (
+            "\n\n## Not finished\n\nAfter your first pass, these living pages are still over their limit:\n\n{feedback}\n\n"
+            "Carry on from the files as they are now: move more detail to the supplementary pages, until each "
+            "living page is under its limit. Nothing may be lost."
+        ),
+        "size.page": "- {path}: {count} characters now, {limit} at most",
+        "size.new": "- {path}: to create, {limit} characters at most",
         "compact.summary": ": {summary}",
         "compact.long": " [already long: {count} characters]",
         "compact.decisions": "- {folder}/{decisions}/ — {count} decision record(s)",
@@ -157,7 +166,7 @@ FR = Locale(
     roles={"archivist": "archiviste", "weaver": "tisseur", "curator": "vérificateur", "restore": "restauration"},
     kinds={
         "merge": "fusion", "condense": "condensation", "fix": "correction", "delete": "suppression",
-        "move": "rangement",
+        "move": "rangement", "link": "liens",
     },
     see_also="Voir aussi",
     strings={
@@ -217,6 +226,13 @@ FR = Locale(
         "retry.weaver": (
             "\n\n## Ta tentative précédente a été refusée\n\n{feedback}\n\nRecommence en respectant ces points."
         ),
+        "retry.curator": (
+            "\n\n## Pas terminé\n\nAprès ton premier passage, ces pages vivantes dépassent encore leur limite :\n\n{feedback}\n\n"
+            "Reprends à partir des fichiers tels qu'ils sont maintenant : déplace davantage de détail vers les pages "
+            "complémentaires, jusqu'à ce que chaque page vivante soit sous sa limite. Rien ne doit être perdu."
+        ),
+        "size.page": "- {path} : {count} caractères actuellement, {limit} au plus",
+        "size.new": "- {path} : à créer, {limit} caractères au plus",
         "compact.summary": " : {summary}",
         "compact.long": " [déjà longue : {count} caractères]",
         "compact.decisions": "- {folder}/{decisions}/ — {count} fiche(s) de décision",

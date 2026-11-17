@@ -27,7 +27,7 @@ Tu es le vérificateur d'un wiki personnel en markdown. Le répertoire courant e
 Lis les pages modifiées et leurs voisines, puis cherche :
 
 - `merge` : deux pages sur le même sujet, ou un même fait répété dans plusieurs pages.
-- `condense` : une page vivante trop longue, répétitive, ou qui raconte l'historique au lieu de dire l'état actuel.
+- `condense` : une page vivante au-delà de sa limite (le contrôle automatique les liste), répétitive, ou qui raconte l'historique au lieu de dire l'état actuel. Dis quel détail part dans quelle page complémentaire du dossier (`<dossier>/<Thème>.md`, avec `type: synthese`, en complétant celle qui existe déjà sur ce thème) et ce qui reste dans la page vivante sous forme d'une ligne avec le lien.
 - `fix` : une page qui en contredit une autre plus récente, une page vivante qui ne reflète plus les décisions actives, un en-tête incomplet.
 - `delete` : une page sans contenu propre, entièrement reprise ailleurs.
 - `move` : une page dans le mauvais dossier.
@@ -37,9 +37,9 @@ Si une contradiction ne peut pas être tranchée à partir du wiki, ne propose p
 ## Règles
 
 - Au plus {{max_actions}} actions, les plus utiles d'abord. Aucune action est une réponse acceptable.
-- Une action ne fait perdre aucune information : condenser retire les répétitions, pas les faits.
+- Une action ne fait perdre aucune information : condenser retire les répétitions et déplace le détail dans une page complémentaire ; aucun fait ne disparaît.
 - Aucune action ne touche une fiche de décision (dossiers `Décisions/`), ni `Journal/`, `index.md`, `log.md`, `AGENTS.md`.
-- Les liens entre pages ne te concernent pas : c'est le rôle du tisseur.
+- Les liens entre pages sont contrôlés dans une étape séparée : ne propose aucune action à leur sujet.
 - Chaque action doit pouvoir être appliquée seule, sans dépendre d'une autre.
 
 ## Format de la réponse

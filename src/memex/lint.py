@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import i18n
-from .index import main_page
+from .index import living_pages, main_page
 from .pages import LinkIndex, Page, _CODE, content_pages, iter_files, links, load_wiki, unlink
 from .util import slugify
 
@@ -44,11 +44,20 @@ def _visible(body: str) -> str:
     return _CODE.sub(" ", body)
 
 
-def lint(root: Path, max_page_chars: int = 24000, min_folders: int = 2) -> LintReport:
+def lint_wiki(config, root: Path) -> LintReport:
+    """`lint` with the limits of the configuration."""
+    return lint(
+        root, config.int("MEMEX_MAX_PAGE_CHARS"), config.int("MEMEX_WEAVER_MIN_FOLDERS"),
+        config.int("MEMEX_LIVING_PAGE_CHARS"),
+    )
+
+
+def lint(root: Path, max_page_chars: int = 12000, min_folders: int = 2, living_page_chars: int = 0) -> LintReport:
     loc = i18n.current()
     report = LintReport()
     all_pages = load_wiki(Path(root))
     pages = content_pages(all_pages)
+    living = living_pages(pages) if living_page_chars else set()
     link_index = LinkIndex(list(iter_files(Path(root))))
     inbound: dict[str, set[str]] = {path: set() for path in pages}
 
@@ -59,8 +68,15 @@ def lint(root: Path, max_page_chars: int = 24000, min_folders: int = 2) -> LintR
             report.problems.append({"page": path, "problem": f"header without `{loc.k_summary}` field"})
         if page.is_decision and not page.meta.get(i18n.K_DATE):
             report.problems.append({"page": path, "problem": f"decision record without `{i18n.K_DATE}`"})
-        if len(page.body) > max_page_chars:
-            report.problems.append({"page": path, "problem": f"page too long ({len(page.body)} characters)"})
+        if path in living and len(page.body) > living_page_chars:
+            report.problems.append({
+                "page": path,
+                "problem": f"living page too long ({len(page.body)} characters, {living_page_chars} at most)",
+            })
+        elif path not in living and len(page.body) > max_page_chars:
+            report.problems.append({
+                "page": path, "problem": f"page too long ({len(page.body)} characters, {max_page_chars} at most)",
+            })
         for target, _label in links(page.body):
             resolved = link_index.resolve(target)
             if resolved is None:

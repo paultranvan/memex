@@ -2,7 +2,7 @@
 """Deterministic fake agent for the tests: it plays every role of the pipeline without an LLM.
 
 The pipeline says what it expects through the environment: MEMEX_ROLE (extract,
-integrate, weave, diagnose, apply or probe) and MEMEX_LANG (the wiki language).
+integrate, weave, diagnose, links, apply or probe) and MEMEX_LANG (the wiki language).
 The prompt is read from $MEMEX_PROMPT_FILE and the work happens in the current
 directory. Nothing here is tied to one language: folder names and header keys
 come from `memex.i18n`, and the places where the prompt is searched come from
@@ -10,7 +10,8 @@ the prompt templates (`prompts/<lang>/`) and from the i18n strings.
 
 FAKE_AGENT_MODE simulates the misbehaviours the guardrails must stop:
 fail, fail_work, garbage, silent, delete, delete_once, edit_decision, outside,
-rewrite, no_concepts. FAKE_AGENT_CALLS names a file that gets one JSON line per call.
+rewrite (the weaver, or the curator on a `link` action, changes the text), no_concepts,
+no_findings (the curator reports on no folder's links), half_condensed (the curator needs two passes). FAKE_AGENT_CALLS names a file that gets one JSON line per call.
 
 In the test transcripts, a line `DECISION: title | content | reason` (or FACT:,
 DEAD_END:) declares an item to extract, `@Name` an entity, and `TOPIC: name`
@@ -31,7 +32,7 @@ from memex.agent import PROBE_TOKEN  # noqa: E402
 ROLE = os.environ.get("MEMEX_ROLE", "")
 MODE = os.environ.get("FAKE_AGENT_MODE", "ok")
 PROMPTS = Path(i18n.__file__).resolve().parent / "prompts"
-RETRY = {"integrate": "retry.archivist", "weave": "retry.weaver"}
+RETRY = {"integrate": "retry.archivist", "weave": "retry.weaver", "apply": "retry.curator"}
 prompt = Path(os.environ["MEMEX_PROMPT_FILE"]).read_text(encoding="utf-8")
 loc = i18n.get(os.environ["MEMEX_LANG"])
 
@@ -200,19 +201,46 @@ def diagnose() -> None:
     print(json.dumps({"actions": actions, "questions": questions}, ensure_ascii=False))
 
 
+def check_links() -> None:
+    folder = section("curate-links", "folder").strip()
+    if MODE == "no_findings":      # the agent answers without saying what it read
+        print(json.dumps({"finding": "", "action": None}))
+        return
+    action = None
+    for candidate in sorted(Path(folder).glob("*Isolated*.md")):
+        action = {
+            "title": f"Link {candidate.name}", "pages": [candidate.as_posix()],
+            "reason": "Nothing in its folder leads to this page.", "instruction": "Link it to the living page of its folder.",
+        }
+    finding = "a page nothing leads to" if action else "nothing to change"
+    print(json.dumps({"finding": finding, "action": action}, ensure_ascii=False))
+
+
 def apply() -> None:
     action = json_block("curate-apply", "action")
     for name in action["pages"]:
         target = Path(name)
         if action["kind"] == "delete":
             target.unlink()
+        elif action["kind"] == "link":
+            top, folder = name.split("/")[:2]
+            text = target.read_text(encoding="utf-8")
+            if MODE == "rewrite":
+                text += "\nSentence added by the curator.\n"
+            text += f"\n## {loc.see_also}\n\n- [[{top}/{folder}/{folder}|{folder}]] — the folder's living page.\n"
+            target.write_text(text, encoding="utf-8")
         else:
             text = target.read_text(encoding="utf-8")
-            target.write_text(text.replace("\nRepetition.", "") + "\nCondensed.\n", encoding="utf-8")
+            if MODE == "half_condensed":     # removes one repetition per pass
+                target.write_text(text.replace("\nRepetition.", "", 1), encoding="utf-8")
+            else:
+                target.write_text(text.replace("\nRepetition.", "") + "\nCondensed.\n", encoding="utf-8")
     Path(".memex-result.json").write_text(json.dumps({"done": True, "summary": "Test action applied."}), encoding="utf-8")
 
 
-ROLES = {"extract": extract, "integrate": integrate, "weave": weave, "diagnose": diagnose, "apply": apply}
+ROLES = {
+    "extract": extract, "integrate": integrate, "weave": weave, "diagnose": diagnose, "links": check_links, "apply": apply,
+}
 if ROLE not in ROLES:
     sys.exit(3)
 ROLES[ROLE]()

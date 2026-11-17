@@ -28,15 +28,15 @@ You are the archivist of a personal wiki written in markdown and read in Obsidia
 2. Integrate each item where the conventions say it belongs:
    - `decision`: create a record in `<folder>/Decisions/` named `<session date> <short title>.md` (no `:` or other special character in the name), then update the living page (the "Decisions" section, and "Key points" if the choice is a structural one). If it supersedes an existing decision, leave that decision's text untouched: only set its header to `status: superseded` and fill in `superseded_by`. A minor choice does not deserve a record: one line in the living page.
    - `dead_end`: one line in "Dead ends", with the reason.
-   - `problem`: in "Known problems", with the cause and the solution.
+   - `problem`: in "Known problems": the symptom, its cause and the fix, in one or two lines.
    - `state`: update "In brief", "Key points" or "Open questions". Rewrite what is no longer true instead of adding a sentence that contradicts it.
    - `fact`, `preference`: in the page of the folder concerned, or in `Topics/Environment/` and `Topics/Working preferences/` if they apply everywhere.
-   - `synthesis`: in the living page if it is short, otherwise in a supplementary page of the folder, linked from the living page.
+   - `synthesis`: in a supplementary page of the folder, with one line and the link in the living page; directly in the living page only if it fits in a line or two.
 3. If the folder's living page does not exist, create it with its full header (`type`, `title`, `summary`, `entities`) and the sections it needs.
 4. Keep the `summary` field of the pages you modify up to date, and their `entities` field.
 5. Add `[[Folder/Page|label]]` links to the pages you mention.
 6. An item that is already in the wiki, or that has no lasting value on rereading, is not integrated: skip it.
-7. A living page must stay readable in one sitting: no more than about {{max_chars}} characters. If the page list flags it as "already long", do not add the detail of the new material to it. Put that detail in a supplementary page of the folder, by theme (`<folder>/<Theme>.md`, with `type: synthesis`), adding to the one that already exists on that theme, and leave only one line with the link in the living page.
+7. Pages stay condensed: quality matters more than quantity. The living page is loaded whole at the start of every session on the folder: it holds what is needed to act today, each point in one or two lines, and no more than about {{living_chars}} characters in all. Detail (how a problem was diagnosed, a comparison, a procedure, the history of a change) goes into a supplementary page of the folder, by theme (`<folder>/<Theme>.md`, with `type: synthesis`): add to the one that already exists on that theme, and leave only one line with the link in the living page. No page goes beyond about {{max_chars}} characters. When the page list flags a page as "already long", add no detail to it: tighten the lines you touch without dropping a fact, and put the new material in a supplementary page (on a narrower theme if the existing one is flagged too).
 8. The `entities` field stays short: a dozen at most, lasting tools, services or techniques that another folder might mention. No commands, file names or hardware references.
 
 When you are done, write the file `.memex-result.json` at the root:

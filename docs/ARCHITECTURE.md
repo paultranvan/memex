@@ -104,7 +104,8 @@ backup from which the server can be rebuilt.
 - **A pointer** in `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`: where the wiki is, when to
   consult it, never to write to it.
 - **An injection at start-up**: if the session opens in a project the wiki knows, its living page
-  is printed by the hook and enters the context (6,000 characters at most). Under it, the hook
+  is printed by the hook and enters the context (8,000 characters at most; a living page within
+  its limit of 5,000 is printed whole). Under it, the hook
   lists the pages elsewhere in the wiki that are linked with the project, in either direction:
   their path and their one-line summary, not their content. The agent reads the ones it needs.
 - **A read rule** in Claude Code's permissions, for the wiki folder.
@@ -234,7 +235,7 @@ AGENTS.md                                     the conventions (yours alone to ed
 
 | | Archivist | Weaver | Curator |
 |---|---|---|---|
-| Role | Integrates what the sessions bring | Links the pages, maintains `Concepts/` | Tightens: duplicates, stale content, pages that are too long |
+| Role | Integrates what the sessions bring | Links the pages, maintains `Concepts/` | Tightens (duplicates, stale content, pages over their limit) and checks the links |
 | When | On every segment | After the archivist, if there are leads | Every week |
 | Risk | Additive | Additive | Destructive |
 | Applied | Directly | Directly | **After your approval** |
@@ -246,7 +247,26 @@ mentioned in at least two folders without a page of their own, broken links. The
 homonyms and writes the cross-cutting page. It does not wake up while the wiki has fewer than
 twelve pages, nor if the leads are the same as on the previous run.
 
-**The curator** makes a read-only diagnosis, then applies each action in a separate commit, on a
+**Page sizes.** A living page is loaded whole at the start of every session, so it has a limit of
+its own (`MEMEX_LIVING_PAGE_CHARS`, 5,000 characters); every other page has a higher one
+(`MEMEX_MAX_PAGE_CHARS`, 12,000). At 80 % of its limit a page is flagged to the archivist, which
+then puts new detail in a supplementary page of the folder, by theme, and leaves one line with the
+link. Beyond the limit the check without a model reports the page, and the curator proposes to
+condense it the same way. The curator is told the size and the limit of each page it condenses,
+and gets one more pass if a living page is still over its limit. See D43.
+
+**The curator** has two jobs. It tightens: duplicates, stale content, pages over their limit. And
+it checks the links of a few folders on each run (`MEMEX_CURATOR_LINK_FOLDERS`, 4), those that
+changed first, then the ones checked longest ago, so that every folder comes round: a link that
+leads to the wrong page, two pages on the same matter that ignore each other, a broken link whose
+target can be identified. Each folder is a call of its own, in which the agent reads the folder's
+pages and the pages they are linked with, says what it found, and may propose one `link` action,
+in addition to the actions of the diagnosis. Only the folders it reports on count as checked, and
+a folder that the same review already reworks waits for the next run. A `link` action may change
+links and the "See also" section, and the guardrails reject it if a single other word differs.
+See D44.
+
+It makes a read-only diagnosis, then applies each action in a separate commit, on a
 review branch. You receive the list; you answer "ok", "ok except 2" or "no". Approving carries the
 chosen commits over to `main`. A rejected action is recorded and is not proposed again. A review
 left unanswered expires after ten days. A deleted page stays in the history:
@@ -425,6 +445,39 @@ production.
   which files the detail in a companion page per theme. One catch-all page had reached 30,000
   characters.
 
+**D43 — Pages stay condensed; a living page fits in what a session receives.**
+On the author's wiki, four of six project pages were longer than what the hook injects, so every
+session started with a page cut in the middle. The limit that existed (24,000 characters, flagged
+at 60 %) was a ceiling against runaway pages, not a target. There are now two limits: 5,000
+characters for a living page, 12,000 for any other, both flagged at 80 %; the hook injects 8,000.
+The conventions ask for one or two lines per point, and for the detail (a diagnosis, a comparison,
+a procedure) to live in supplementary pages by theme, linked from the living page.
+*Why two limits:* the living page is paid for by every session, a supplementary page only by the
+session that opens it.
+*Why the archivist does not condense on its own:* moving text out of a page is where facts get
+lost. The archivist stops adding; cutting an existing page down is a `condense` action of the
+curator, which you approve.
+*What the code does for the model:* it measures. On a first real run, three condensed pages out of
+six were still over their limit, because nothing told the model how far it was from it. Each
+`condense` action now receives the size and the limit of its pages, and one more pass when a
+living page is still over.
+
+**D44 — The curator checks the links, with your approval.**
+The weaver works from textual leads: a title mentioned without a link, an entity shared by several
+folders. Nothing looked at whether an existing link still leads to the right page, or at two pages
+on the same matter that never name each other. That judgement needs reading, so it goes to an
+agent, and to the one whose changes you approve: the curator reads a few folders per run with the
+pages they are linked with, and proposes `link` actions.
+*Why one call per folder:* asked to check six folders along with the rest of its diagnosis, the
+model answered in 27 seconds and said itself that it had judged the links from the summaries.
+*Why not the weaver:* the weaver may not remove or redirect a link, and that restriction is what
+makes it safe to run unattended.
+*Why in rotation:* a wiki cannot be reread whole every week. Changed folders come first, then the
+ones checked longest ago (`state/curator.json`).
+*What the code guarantees:* a `link` action that changes a word of the text, creates a page or
+deletes one is rejected. A folder counts as checked only if the curator's reply says what it read
+and found there.
+
 **D23 — One writer at a time.**
 A single lock covers the archivist, the weaver, the curator and the approvals.
 
@@ -438,8 +491,8 @@ themes, which complicates filing without bringing anything the concepts do not.
 *Why:* it is the history that explains why things are where they are.
 
 **D26 — Three agents.**
-The archivist adds, the weaver links, the curator tightens: three risks, three cadences, three
-scopes. The weaver is separate because it needs an overall view that the archivist does not have.
+The archivist adds, the weaver links, the curator tightens and checks: three risks, three cadences,
+three scopes. The weaver is separate because it needs an overall view that the archivist does not have.
 
 **D27 — The curator proposes; you approve.**
 By messaging, action by action. Refusals are remembered.
@@ -460,7 +513,7 @@ possible later.
 The project's page says which pages it points to, but not which pages point to it: a concept page
 that describes how three projects use a tool was invisible from each of them. The hook now lists
 every page outside the project's folder that is linked with it in either direction, the most
-linked first, with its summary (`MEMEX_HOOK_RELATED`, 8 by default, a third of the injected text
+linked first, with its summary (`MEMEX_HOOK_RELATED`, 8 by default, a quarter of the injected text
 at most). Journal pages are left out: they link to every project by construction.
 *Why a list and not the content:* loading the neighbours would multiply what every session pays
 for, whatever it is about. One line is enough for the agent to know the page exists and to decide.
@@ -521,7 +574,7 @@ and a conventions file.
 
 **Verified on the author's machine (2026-11-16):**
 
-- 120 automated tests, including 29 end-to-end scenarios (nominal path, session continuations,
+- 126 automated tests, including 29 end-to-end scenarios (nominal path, session continuations,
   guardrails, quarantine, agent outage, review, restore, rebuild, forged segment), on an English wiki
   and on a French one.
 - An independent review of the code by a second agent, which reproduced five defects (including a
@@ -539,6 +592,13 @@ and a conventions file.
 - The list of related pages printed by the session-start hook, on that wiki (2026-11-17): three to
   seven pages per project, 0.09 s added to the start of a session. Whether agents make good use
   of the list has not been measured.
+- Condensed pages and the link check (2026-11-18), with a real model on a copy of that wiki, in
+  French. The archivist filed the detail of a note in a supplementary page and left two lines with
+  the link in the living page. The curator brought the six living pages over their limit under it,
+  one `condense` action each (the longest from 30,000 characters to 2,800); the total text of the
+  pages concerned grew by 0 to 23 %, which suggests detail was moved rather than dropped, but this
+  was not checked fact by fact. The links of six folders were checked, one call each: two `link`
+  actions proposed, both accepted by the guardrails.
 - The three harnesses (Hermes, Claude Code, Codex), at the three permission levels, in the sandbox.
 - The exclusion of the pipeline's own sessions, on Hermes's real database.
 - The SSH gate against a real `sshd`: shell, arbitrary command, other repository and writing all
@@ -551,6 +611,8 @@ and a conventions file.
   inside the systemd unit**. `memex server status` says whether it is active.
 - The headless LiveSync client, Tailscale, Hermes's messaging gateway and its skill.
 - The full pipeline with Codex as the writer (only its individual calls were).
+- The English versions of the prompts changed or added on 2026-11-18 (`integrate`, `curate-diagnose`,
+  `curate-apply`, `curate-links`) with a real model: they have only run against the fake agent.
 - The injection of the `SessionStart` hook in Codex (a bug report exists for one version).
 - The path without systemd (cron), macOS, and the real formats of the ChatGPT and claude.ai
   exports.

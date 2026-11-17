@@ -19,7 +19,7 @@ from . import frontmatter, i18n, index, segment as segment_mod
 from .agent import Agent, AgentError, parse_json_reply
 from .config import Config
 from .gate import archive_path
-from .lint import lint, summary as lint_summary
+from .lint import lint_wiki, summary as lint_summary
 from .notify import notify
 from .pages import Page, load_wiki, parse_page, wikilink
 from .segment import Segment
@@ -275,6 +275,7 @@ class Server:
         name = "ingest"
         feedback = ""
         max_chars = self.config.int("MEMEX_MAX_PAGE_CHARS")
+        living_chars = self.config.int("MEMEX_LIVING_PAGE_CHARS")
         for attempt in (1, 2):
             path = self.repo.new_worktree(name)
             base = self.repo.head("HEAD", cwd=path)
@@ -284,8 +285,9 @@ class Server:
                 conventions=self.conventions(path), meta=self.meta_block(seg),
                 folder=self._where(folder, new, extracted),
                 items=json.dumps(extracted["items"], ensure_ascii=False, indent=2),
-                index=index.compact(load_wiki(path), long_page=int(max_chars * 0.6)),
-                max_chars=str(max_chars),
+                # Flagged a little before the limit: the page is then tightened instead of extended.
+                index=index.compact(load_wiki(path), long_page=int(max_chars * 0.8), long_living=int(living_chars * 0.8)),
+                max_chars=str(max_chars), living_chars=str(living_chars),
             )
             if feedback:
                 prompt += i18n.current().t("retry.archivist", feedback=feedback)
@@ -558,7 +560,7 @@ class Server:
         config = self.config
         if not config.bool("MEMEX_WEAVER") and not force:
             return ""
-        report = lint(self.repo.dir, config.int("MEMEX_MAX_PAGE_CHARS"), config.int("MEMEX_WEAVER_MIN_FOLDERS"))
+        report = lint_wiki(config, self.repo.dir)
         if report.stats.get("pages", 0) < config.int("MEMEX_WEAVER_MIN_PAGES") and not force:
             return ""
         marker = config.state_dir / "weaver.json"
@@ -607,7 +609,7 @@ class Server:
             if attempt == 2:
                 return "rejected by the guardrails"
         # The run went through: a candidate still without a page was dismissed knowingly.
-        after = lint(path, config.int("MEMEX_MAX_PAGE_CHARS"), config.int("MEMEX_WEAVER_MIN_FOLDERS"))
+        after = lint_wiki(config, path)
         still = {slugify(c["entity"]) for c in after.concepts}
         for candidate in candidates:
             key = slugify(candidate["entity"])
@@ -640,7 +642,7 @@ class Server:
 
     # ── status ────────────────────────────────────────────────────────────
     def status(self) -> dict[str, Any]:
-        report = lint(self.repo.dir) if self.repo.exists() else None
+        report = lint_wiki(self.config, self.repo.dir) if self.repo.exists() else None
         failures = read_json(self.failures_path, {}) or {}
         reviews = [r for r in (read_json(p, {}) for p in sorted((self.config.state_dir / "reviews").glob("*.json")))
                    if r and r.get("status") == "pending"] if (self.config.state_dir / "reviews").is_dir() else []

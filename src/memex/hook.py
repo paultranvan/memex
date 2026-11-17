@@ -92,8 +92,8 @@ def project_context(config: Config, cwd: str) -> str:
     related = ""
     if config.int("MEMEX_HOOK_RELATED") > 0:
         try:
-            # At most a third of the room: the project's own page comes first.
-            related = related_block(load_wiki(clone), folder, config.int("MEMEX_HOOK_RELATED"), limit // 3)
+            # At most a quarter of the room: a living page within its limit is then printed whole.
+            related = related_block(load_wiki(clone), folder, config.int("MEMEX_HOOK_RELATED"), limit // 4)
         except Exception:
             related = ""  # the page matters more than its neighbours
     footer = (

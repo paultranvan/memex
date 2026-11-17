@@ -228,7 +228,8 @@ class FrenchPages(LangCase):
         self.assertEqual(fr.see_also, "Voir aussi")
         self.assertEqual(fr.roles, {"archivist": "archiviste", "weaver": "tisseur", "curator": "vérificateur", "restore": "restauration"})
         self.assertEqual(fr.kinds, {
-            "merge": "fusion", "condense": "condensation", "fix": "correction", "delete": "suppression", "move": "rangement"})
+            "merge": "fusion", "condense": "condensation", "fix": "correction", "delete": "suppression", "move": "rangement",
+            "link": "liens"})
 
     def test_page_properties_read_the_french_keys(self):
         page = parse_page("Projets/Solitaire/Décisions/2026-11-12 Scores.md", (

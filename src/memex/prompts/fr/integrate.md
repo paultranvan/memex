@@ -28,15 +28,15 @@ Tu es l'archiviste d'un wiki personnel en markdown, lu dans Obsidian. Le répert
 2. Intègre chaque élément là où les conventions le prévoient :
    - `decision` : crée une fiche dans `<dossier>/Décisions/` nommée `<date de la session> <titre court>.md` (sans `:` ni autre signe spécial dans le nom), puis mets à jour la page vivante (section « Décisions », et « Grandes lignes » si le choix est structurant). Si elle remplace une décision existante, n'en touche pas le texte : passe seulement son en-tête à `statut: remplacee` et renseigne `remplacee_par`. Un choix mineur ne mérite pas de fiche : une ligne dans la page vivante.
    - `dead_end` : une ligne dans « Pistes écartées », avec la raison.
-   - `problem` : dans « Problèmes connus », avec la cause et la solution.
+   - `problem` : dans « Problèmes connus » : le symptôme, sa cause et la solution, en une ou deux lignes.
    - `state` : mets à jour « En bref », « Grandes lignes » ou « Questions ouvertes ». Réécris ce qui n'est plus vrai au lieu d'ajouter une phrase contradictoire.
    - `fact`, `preference` : dans la page du dossier concerné, ou dans `Sujets/Environnement/` et `Sujets/Préférences de travail/` s'ils valent partout.
-   - `synthesis` : dans la page vivante si c'est court, sinon dans une page complémentaire du dossier, liée depuis la page vivante.
+   - `synthesis` : dans une page complémentaire du dossier, avec une ligne et le lien dans la page vivante ; directement dans la page vivante seulement si elle tient en une ou deux lignes.
 3. Si la page vivante du dossier n'existe pas, crée-la avec son en-tête complet (`type`, `titre`, `resume`, `entites`) et les sections utiles.
 4. Tiens à jour le champ `resume` des pages que tu modifies, et leur champ `entites`.
 5. Ajoute les liens `[[Dossier/Page|libellé]]` vers les pages que tu cites.
 6. Un élément déjà présent dans le wiki, ou sans valeur durable à la relecture, ne s'intègre pas : ignore-le.
-7. Une page vivante reste lisible d'une traite : pas plus de {{max_chars}} caractères environ. Si la liste des pages la signale « déjà longue », n'y ajoute pas le détail du nouvel apport. Range-le dans une page complémentaire du dossier, par thème (`<dossier>/<Thème>.md`, avec `type: synthese`), en complétant celle qui existe déjà sur ce thème, et ne laisse dans la page vivante qu'une ligne avec le lien.
+7. Les pages restent condensées : la qualité compte plus que la quantité. La page vivante est chargée en entier au début de chaque session sur le dossier : elle contient ce qu'il faut pour agir aujourd'hui, chaque point en une ou deux lignes, et pas plus de {{living_chars}} caractères environ au total. Le détail (comment un problème a été diagnostiqué, un comparatif, une procédure, l'historique d'un changement) va dans une page complémentaire du dossier, par thème (`<dossier>/<Thème>.md`, avec `type: synthese`) : complète celle qui existe déjà sur ce thème, et ne laisse dans la page vivante qu'une ligne avec le lien. Aucune page ne dépasse {{max_chars}} caractères environ. Quand la liste des pages signale une page « déjà longue », n'y ajoute aucun détail : resserre les lignes que tu touches sans retirer un fait, et range le nouvel apport dans une page complémentaire (sur un thème plus étroit si celle qui existe est signalée elle aussi).
 8. Le champ `entites` reste court : une douzaine au plus, des outils, services ou techniques durables qu'un autre dossier pourrait citer. Pas de commande, de nom de fichier ni de référence de matériel.
 
 Quand tu as fini, écris à la racine le fichier `.memex-result.json` :

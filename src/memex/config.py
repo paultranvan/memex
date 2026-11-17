@@ -45,7 +45,7 @@ DEFAULTS: dict[str, str] = {
     "MEMEX_BACKUP_PULL": "1",
     "MEMEX_BACKUP_KEEP": "7",
     # ── host: reading by the agents ───────────────────────────────────────
-    "MEMEX_HOOK_MAX_CHARS": "6000",
+    "MEMEX_HOOK_MAX_CHARS": "8000",
     "MEMEX_HOOK_RELATED": "8",
     # ── server ────────────────────────────────────────────────────────────
     "MEMEX_HOME": "/srv/memex",
@@ -67,11 +67,13 @@ DEFAULTS: dict[str, str] = {
     "MEMEX_RUN_BUDGET_S": "2400",
     "MEMEX_MIN_USER_CHARS": "80",
     "MEMEX_MAX_RETRIES": "3",
-    "MEMEX_MAX_PAGE_CHARS": "24000",
+    "MEMEX_LIVING_PAGE_CHARS": "5000",
+    "MEMEX_MAX_PAGE_CHARS": "12000",
     "MEMEX_WEAVER": "1",
     "MEMEX_WEAVER_MIN_PAGES": "12",
     "MEMEX_WEAVER_MIN_FOLDERS": "2",
     "MEMEX_CURATOR_MAX_ACTIONS": "8",
+    "MEMEX_CURATOR_LINK_FOLDERS": "4",
     "MEMEX_REVIEW_TTL_DAYS": "10",
     "MEMEX_SERVER_BACKUP_KEEP": "14",
 }

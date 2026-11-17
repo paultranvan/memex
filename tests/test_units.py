@@ -705,6 +705,25 @@ class WikiModel(Sandbox):
         self.assertNotIn("Projects/B/B.md — B [", listing)
         self.assertNotIn("already long", compact_index(load_wiki(root)))
 
+    def test_a_living_page_has_a_lower_limit_than_the_other_pages(self):
+        root = self.server_home / "wiki"
+        write_pages(root, {
+            "Projects/A/A.md": "---\ntype: project\ntitle: A\nsummary: r\n---\n\n" + "word " * 240,
+            "Projects/A/Notes.md": "---\ntype: synthesis\ntitle: Notes\nsummary: r\n---\n\n" + "word " * 240 + "[[Projects/A/A]]",
+            "Topics/B/B.md": "---\ntype: topic\ntitle: B\nsummary: r\n---\n\nShort. [[Projects/A/Notes]]\n",
+        })
+        self.assertEqual(lint(root, max_page_chars=2000, living_page_chars=1000).problems, [
+            {"page": "Projects/A/A.md", "problem": "living page too long (1200 characters, 1000 at most)"}])
+        self.assertEqual(lint(root, max_page_chars=1000, living_page_chars=5000).problems, [
+            {"page": "Projects/A/Notes.md", "problem": "page too long (1216 characters, 1000 at most)"}])
+        self.assertEqual(lint(root, max_page_chars=1000).problems, [                      # no limit of their own: the common one
+            {"page": "Projects/A/A.md", "problem": "page too long (1200 characters, 1000 at most)"},
+            {"page": "Projects/A/Notes.md", "problem": "page too long (1216 characters, 1000 at most)"}])
+        listing = compact_index(load_wiki(root), long_page=2000, long_living=1000)
+        self.assertIn("Projects/A/A.md — A [already long: 1200 characters]", listing)
+        self.assertNotIn("Notes [", listing)
+        self.assertEqual((DEFAULTS["MEMEX_LIVING_PAGE_CHARS"], DEFAULTS["MEMEX_MAX_PAGE_CHARS"]), ("5000", "12000"))
+
 
 class Integration(Sandbox):
     init_server = False
@@ -912,7 +931,110 @@ class ServerState(Sandbox):
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(reviews.run(), 0)
         self.assertEqual([a["kind"] for a in reviews.pending()["actions"]], ["delete"])
-        self.assertEqual([c["role"] for c in self.agent_calls()], ["diagnose", "apply"])
+        # the folder left untouched by the review has its links checked
+        self.assertEqual([c["role"] for c in self.agent_calls()], ["diagnose", "links", "apply"])
+
+    def linked_server(self):
+        server = Server(self.config)
+        write_pages(server.repo.dir, {
+            "Projects/A/A.md": "---\ntype: project\ntitle: A\nsummary: Page A.\n---\n\nBuilt with [[Concepts/Git]].\n",
+            "Projects/B/B.md": "---\ntype: project\ntitle: B\nsummary: Page B.\n---\n\nText.\n",
+            "Topics/C/C.md": "---\ntype: topic\ntitle: C\nsummary: Page C.\n---\n\nThe same host as [[Projects/A/A|A]].\n",
+            "Concepts/Git.md": "---\ntype: concept\ntitle: Git\nsummary: Version control.\n---\n\nText.\n",
+        })
+        server.repo.commit_all(server.repo.dir, "four pages", "human")
+        return server
+
+    def curator_run(self, server):
+        """One curator run; returns what each link check was given: the folder and the pages it is linked with."""
+        reviews = Reviews(server)
+        with mock.patch.object(server, "prompt", wraps=server.prompt) as prompt, contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(reviews.run(), 0)
+        return [(c.kwargs["folder"], c.kwargs["neighbours"]) for c in prompt.call_args_list if c.args[0] == "curate-links"]
+
+    def test_curator_checks_the_links_of_a_few_folders_changed_first_then_checked_longest_ago(self):
+        self.set(MEMEX_CURATOR_LINK_FOLDERS="2")
+        server = self.linked_server()
+        marker = self.server_home / "state/curator.json"
+        # first run: nothing was ever checked, so in alphabetical order; each folder comes with its neighbours
+        self.assertEqual(self.curator_run(server), [
+            ("Projects/A", "- Concepts/Git.md — Version control.\n- Topics/C/C.md — Page C."), ("Projects/B", "(none)")])
+        state = json.loads(marker.read_text(encoding="utf-8"))
+        self.assertEqual(sorted(state["links_checked"]), ["Projects/A", "Projects/B"])
+        # a folder that changed comes first, then the one never checked or checked longest ago
+        state["links_checked"] = {"Projects/A": "2026-11-10T08:00:00Z", "Projects/B": "2026-11-01T08:00:00Z", "Gone/Folder": "2026-01-01T00:00:00Z"}
+        marker.write_text(json.dumps(state), encoding="utf-8")
+        write_pages(server.repo.dir, {"Projects/A/Notes.md": "---\ntype: synthesis\ntitle: Notes\nsummary: r\n---\n\nSee [[Projects/A/A|A]].\n"})
+        server.repo.commit_all(server.repo.dir, "a page in A", "human")
+        self.assertEqual([folder for folder, _ in self.curator_run(server)], ["Projects/A", "Topics/C"])
+        state = json.loads(marker.read_text(encoding="utf-8"))
+        self.assertEqual(sorted(state["links_checked"]), ["Projects/A", "Projects/B", "Topics/C"])   # the folder that no longer exists is forgotten
+        self.assertEqual(state["links_checked"]["Projects/B"], "2026-11-01T08:00:00Z")
+        # nothing changed in a folder: the one checked longest ago
+        write_pages(server.repo.dir, {"Concepts/Git.md": "---\ntype: concept\ntitle: Git\nsummary: Version control.\n---\n\nMore text.\n"})
+        server.repo.commit_all(server.repo.dir, "a concept", "human")
+        self.assertEqual(self.curator_run(server)[0][0], "Projects/B")
+        # and the check can be turned off
+        self.set(MEMEX_CURATOR_LINK_FOLDERS="0")
+        server = Server(self.config)
+        write_pages(server.repo.dir, {"Projects/B/B.md": "---\ntype: project\ntitle: B\nsummary: Page B.\n---\n\nNew text.\n"})
+        server.repo.commit_all(server.repo.dir, "B", "human")
+        self.assertEqual(self.curator_run(server), [])
+
+    def test_only_the_folders_the_curator_reports_on_count_as_checked(self):
+        server = self.linked_server()
+        os.environ["FAKE_AGENT_MODE"] = "no_findings"
+        self.curator_run(server)
+        state = json.loads((self.server_home / "state/curator.json").read_text(encoding="utf-8"))
+        self.assertEqual(state["links_checked"], {})
+        self.assertEqual(Reviews(server).all()[-1]["links"], [])
+
+    def test_a_condensed_page_still_over_its_limit_gets_a_second_pass(self):
+        self.set(MEMEX_LIVING_PAGE_CHARS="12")
+        server = Server(self.config)
+        write_pages(server.repo.dir, {
+            "Topics/Long/Long.md": "---\ntype: topic\ntitle: Long\nsummary: Page Long.\n---\n\nText.\nRepetition.\nRepetition.\n",
+        })
+        server.repo.commit_all(server.repo.dir, "a long page", "human")
+        os.environ["FAKE_AGENT_MODE"] = "half_condensed"        # one repetition removed per pass: 18 characters, then 6
+        reviews = Reviews(server)
+        with mock.patch.object(server, "prompt", wraps=server.prompt) as prompt, contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(reviews.run(), 0)
+        self.assertEqual([(c["role"], c["retry"]) for c in self.agent_calls()], [("diagnose", False), ("apply", False), ("apply", True)])
+        sizes = [call.kwargs["sizes"] for call in prompt.call_args_list if call.args[0] == "curate-apply"]
+        self.assertEqual(sizes, ["- Topics/Long/Long.md: 30 characters now, 12 at most", "- Topics/Long/Long.md: 18 characters now, 12 at most"])
+        [action] = reviews.pending()["actions"]
+        self.assertEqual(server.repo.show(action["commit"], "Topics/Long/Long.md").split("---\n\n")[1], "Text.\n")
+        # under the limit after the first pass: no second one
+        reviews.decide(reject_all=True)
+        self.set(MEMEX_LIVING_PAGE_CHARS="20")
+        server = Server(self.config)
+        reviews = Reviews(server)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(reviews.run(force=True), 0)
+        self.assertEqual([c["role"] for c in self.agent_calls()][3:], ["diagnose", "apply"])
+
+    def test_a_link_action_of_the_curator_may_change_links_and_nothing_else(self):
+        server = self.linked_server()
+        write_pages(server.repo.dir, {"Projects/B/Isolated notes.md": "---\ntype: synthesis\ntitle: Isolated notes\nsummary: r\n---\n\nText.\n"})
+        server.repo.commit_all(server.repo.dir, "a page nothing leads to", "human")
+        reviews = Reviews(server)
+        os.environ["FAKE_AGENT_MODE"] = "rewrite"           # the agent adds a sentence along with the link
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(reviews.run(), 0)
+        self.assertIsNone(reviews.pending())
+        [action] = reviews.all()[-1]["actions"]
+        self.assertEqual((action["kind"], action["status"]), ("link", "failed"))
+        self.assertIn('Projects/B/Isolated notes.md: a `link` action changed the text; it may only change links and the "See also" section', action["summary"])
+        self.assertNotIn("See also", (server.repo.dir / "Projects/B/Isolated notes.md").read_text(encoding="utf-8"))
+        os.environ["FAKE_AGENT_MODE"] = "ok"
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(reviews.run(force=True), 0)
+        [action] = reviews.pending()["actions"]
+        self.assertEqual((action["kind"], action["status"], action["modified"]), ("link", "pending", ["Projects/B/Isolated notes.md"]))
+        self.assertIn("1 action(s) applied", reviews.decide())
+        self.assertIn("\n## See also\n\n- [[Projects/B/B|B]] — the folder's living page.\n", (server.repo.dir / "Projects/B/Isolated notes.md").read_text(encoding="utf-8"))
+        self.assertIn("\n- links: Link Isolated notes.md\n", (server.repo.dir / "log.md").read_text(encoding="utf-8"))
 
 
 class CommandLine(Sandbox):
@@ -1024,7 +1146,7 @@ class Hooks(Sandbox):
             "- … and 3 more: search the wiki for links to `Projects/Solitaire`\n\nSource: memex wiki",
             hook.project_context(self.config, str(repo)),
         )
-        # A third of the room at most: here 300 characters, which the long fourth line does not fit in.
+        # A quarter of the room at most: here 225 characters, which the long fourth line does not fit in.
         self.set(MEMEX_HOOK_RELATED="8", MEMEX_HOOK_MAX_CHARS="900")
         context = hook.project_context(self.config, str(repo))
         self.assertIn("- `Projects/Chess/Chess.md` — Chess\n- … and 1 more: search the wiki for links to `Projects/Solitaire`\n\nSource", context)
@@ -1033,6 +1155,27 @@ class Hooks(Sandbox):
         context = hook.project_context(self.config, str(repo))
         self.assertNotIn("Related pages", context)
         self.assertIn("their own page]].\n\n---\nSource: memex wiki, read-only (", context)
+
+    def test_a_living_page_within_its_limit_is_printed_whole_with_all_its_related_pages(self):
+        repo = self.make_repo("solitaire", "git@github.com:me/solitaire.git")
+        living = int(DEFAULTS["MEMEX_LIVING_PAGE_CHARS"])
+        body = ("A line of the living page.\n" * 400)[:living - 220]
+        pages = {
+            ".memex/projects.json": json.dumps({"github.com/me/solitaire": "Projects/Solitaire"}),
+            "Projects/Solitaire/Solitaire.md": "---\ntype: project\ntitle: Solitaire\n---\n\n" + body + "The last line.\n"
+            + "".join(f"[[Concepts/A fairly long concept name number {n}]] " for n in range(8)),
+        }
+        for n in range(8):
+            pages[f"Concepts/A fairly long concept name number {n}.md"] = (
+                "---\ntype: concept\ntitle: Concept\nsummary: " + "a summary that goes on and on, " * 8 + "\n---\n\nText.\n"
+            )
+        write_pages(self.config.wiki_clone, pages)
+        context = hook.project_context(self.config, str(repo))
+        self.assertLessEqual(len(context), int(DEFAULTS["MEMEX_HOOK_MAX_CHARS"]))
+        self.assertNotIn("page truncated", context)
+        self.assertIn("The last line.", context)
+        self.assertEqual(context.count("\n- `Concepts/A fairly long concept name number "), 8)
+        self.assertNotIn("more: search the wiki", context)
 
     def test_a_wiki_that_cannot_be_read_still_gives_the_project_page(self):
         repo = self.linked_wiki()

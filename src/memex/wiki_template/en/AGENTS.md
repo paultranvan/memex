@@ -24,7 +24,7 @@ repository does not belong here.
 | `Projects/<Name>/<Name>.md` | Living page of a code project |
 | `Topics/<Name>/<Name>.md` | Living page of a non-code topic (for example "Retirement savings") |
 | `<folder>/Decisions/<YYYY-MM-DD> <title>.md` | Decision records |
-| `<folder>/<Other page>.md` | Supplementary page (comparison, synthesis) when the living page gets too long |
+| `<folder>/<Theme>.md` | Supplementary page, by theme: the detail the living page only points to (a diagnosis, a comparison, a procedure) |
 | `Concepts/<Name>.md` | Cross-cutting pages: a tool, a technique or a theme shared by several folders |
 | `Journal/`, `index.md`, `log.md` | Kept automatically: do not write to them |
 
@@ -48,14 +48,18 @@ automatically. The full provenance is in `.memex/ledger.jsonl` and in the git hi
 ## Living page
 
 It says what is true **today**. It is rewritten when reality changes; history does not pile up
-in it. Recommended sections, to be left out if they would be empty:
+in it. It is loaded whole at the start of every session on the folder, so it stays condensed:
+quality matters more than quantity. Each point takes one or two lines; the detail goes into a
+supplementary page of the folder, by theme, and the living page keeps only one line with the link.
+Recommended sections, to be left out if they would be empty:
 
 - `## In brief` — the goal and the current state, in three to six lines.
 - `## Key points` — for a project: architecture and structural choices; for a topic: where things
   stand. Each structural choice points to its decision record.
-- `## Decisions` — the list of records, most recent first: link, then one line.
+- `## Decisions` — the records that still shape what comes next, most recent first, a dozen at
+  most: link, then one line. The `Decisions/` folder holds them all.
 - `## Dead ends` — what was tried or considered and then abandoned, with the reason.
-- `## Known problems` — the non-obvious pitfalls, with their cause and their solution.
+- `## Known problems` — the non-obvious pitfalls: symptom, cause and fix, in one or two lines each.
 - `## Open questions` — what remains to be settled or done.
 
 ## Decision record
@@ -97,5 +101,5 @@ A small choice with nothing at stake does not deserve a record: one line in the 
 
 - **The archivist** integrates what the sessions bring. It adds and updates; it deletes nothing.
 - **The weaver** links: links between pages, pages in `Concepts/`. It does not change the text of other pages.
-- **The curator** tightens: duplicates, stale content, overlong pages. Its changes are applied only
-  after my approval.
+- **The curator** tightens and checks: duplicates, stale content, overlong pages, wrong or missing
+  links. Its changes are applied only after my approval.

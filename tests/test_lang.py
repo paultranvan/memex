@@ -15,7 +15,7 @@ from helpers import ROOT, Sandbox, git, write_pages
 from memex import __version__, cli, frontmatter, i18n
 from memex.agent import Agent, AgentResult
 from memex.pipeline import ITEM_KINDS, RESULT_FILE, Server
-from memex.review import ACTION_KINDS, Reviews
+from memex.review import ACTION_KINDS, DIAGNOSIS_KINDS, Reviews
 from memex.segment import Message, Segment
 from memex.util import now
 
@@ -23,10 +23,11 @@ PACKAGE = ROOT / "src" / "memex"
 # What each prompt is given by the code.
 PLACEHOLDERS = {
     "extract": {"meta", "transcript"},
-    "integrate": {"conventions", "meta", "folder", "items", "index", "max_chars"},
+    "integrate": {"conventions", "meta", "folder", "items", "index", "max_chars", "living_chars"},
     "weave": {"conventions", "report", "index"},
     "curate-diagnose": {"conventions", "report", "changed", "index", "refused", "max_actions"},
-    "curate-apply": {"conventions", "action"},
+    "curate-links": {"conventions", "folder", "neighbours", "broken", "index", "refused"},
+    "curate-apply": {"conventions", "action", "sizes"},
 }
 
 
@@ -188,28 +189,44 @@ class Prompts(Sandbox):
                 self.assertEqual(list(action), ["kind", "title", "pages", "reason", "instruction"])
                 self.assertEqual(list(question), ["title", "detail"])
                 kinds = action["kind"].split(" | ")
-                self.assertEqual(set(kinds), ACTION_KINDS)
-                self.assertEqual(set(re.findall(r"(?m)^- `(\w+)`", template(lang, "curate-diagnose"))), ACTION_KINDS)
+                self.assertEqual(set(kinds), DIAGNOSIS_KINDS)
+                self.assertEqual(ACTION_KINDS - DIAGNOSIS_KINDS, {"link"})       # the link check is the only source of a `link` action
+                self.assertEqual(set(re.findall(r"(?m)^- `(\w+)`", template(lang, "curate-diagnose"))), DIAGNOSIS_KINDS)
                 page = f"{loc.topics}/A/A.md"
                 write_pages(server.repo.dir, {page: f"---\ntype: {loc.type('topic')}\n{loc.k_title}: A\n{loc.k_summary}: A.\n---\n\nText.\n"})
                 server.repo.commit_all(server.repo.dir, "a page", "human")
-                plan = {"actions": [{**action, "kind": kind, "pages": [page]} for kind in kinds], "questions": shown["questions"]}
+                check = example(lang, "curate-links")
+                self.assertEqual(list(check), ["finding", "action"])
+                self.assertEqual(list(check["action"]), ["title", "pages", "reason", "instruction"])
+                other = f"{loc.topics}/B/B.md"
+                write_pages(server.repo.dir, {other: f"---\ntype: {loc.type('topic')}\n{loc.k_title}: B\n{loc.k_summary}: B.\n---\n\nText.\n"})
+                server.repo.commit_all(server.repo.dir, "another page", "human")
+                plan = {
+                    "actions": [{**action, "kind": kind, "pages": [page]} for kind in kinds] + [{**action, "kind": "link", "pages": [page]}],
+                    "questions": shown["questions"],
+                }
+                found = {**check, "action": {**check["action"], "pages": [other]}}
                 roles = []
 
                 def run(kind, prompt, cwd, label="", timeout=None, role=""):
                     roles.append(role)
-                    return AgentResult(json.dumps(plan, ensure_ascii=False) if role == "diagnose" else "", 0, 0.0)
+                    reply = {"diagnose": plan, "links": found}.get(role)
+                    return AgentResult(json.dumps(reply, ensure_ascii=False) if reply else "", 0, 0.0)
 
                 reviews = Reviews(server)
                 with mock.patch.object(Agent, "run", side_effect=run), contextlib.redirect_stdout(io.StringIO()):
                     self.assertEqual(reviews.run(), 0)
-                self.assertEqual(roles, ["diagnose"] + ["apply"] * len(kinds))
+                # the folder the diagnosis reworks is left out of the link check; a `link` action of the diagnosis is dropped
+                self.assertEqual(roles, ["diagnose", "links"] + ["apply"] * (len(kinds) + 1))
                 [review] = reviews.all()
-                self.assertEqual([a["kind"] for a in review["actions"]], kinds)
-                for stored in review["actions"]:
+                self.assertEqual([a["kind"] for a in review["actions"]], kinds + ["link"])
+                for stored in review["actions"][:-1]:
                     self.assertEqual([stored[key] for key in ("title", "pages", "reason", "instruction")],
                                      [action["title"], [page], action["reason"], action["instruction"]])
+                self.assertEqual([review["actions"][-1][key] for key in ("title", "pages", "reason", "instruction")],
+                                 [check["action"]["title"], [other], check["action"]["reason"], check["action"]["instruction"]])
                 self.assertEqual(review["questions"], shown["questions"])
+                self.assertEqual(review["links"], [{"folder": f"{loc.topics}/B", "finding": check["finding"]}])
 
             with self.subTest(lang=lang, protocol="result files"):
                 self.assertIn(f"`{RESULT_FILE}`", template(lang, "integrate"))
@@ -295,7 +312,7 @@ class Strings(unittest.TestCase):
             for table, pattern in patterns.items():
                 for found in re.findall(pattern, text):
                     name = found if isinstance(found, str) else next(part for part in found if part)
-                    if table == "roles" and name in ("extract", "integrate", "weave", "diagnose", "apply", "probe"):
+                    if table == "roles" and name in ("extract", "integrate", "weave", "diagnose", "links", "apply", "probe"):
                         continue                       # `role=` is also how the pipeline names the agent's task
                     used.add((table, name, path.name))
         self.assertGreater(len({name for table, name, _ in used if table == "strings"}), 30)      # the scan does see the calls

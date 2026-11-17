@@ -24,7 +24,7 @@ d'un projet n'a pas sa place ici.
 | `Projets/<Nom>/<Nom>.md` | Page vivante d'un projet de code |
 | `Sujets/<Nom>/<Nom>.md` | Page vivante d'un sujet hors code (par exemple « PEA ») |
 | `<dossier>/Décisions/<AAAA-MM-JJ> <titre>.md` | Fiches de décision |
-| `<dossier>/<Autre page>.md` | Page complémentaire (comparatif, synthèse) quand la page vivante devient trop longue |
+| `<dossier>/<Thème>.md` | Page complémentaire, par thème : le détail auquel la page vivante ne fait que renvoyer (diagnostic, comparatif, procédure) |
 | `Concepts/<Nom>.md` | Pages transverses : un outil, une technique, un thème commun à plusieurs dossiers |
 | `Journal/`, `index.md`, `log.md` | Tenus automatiquement : ne pas y écrire |
 
@@ -48,14 +48,19 @@ automatiquement. La provenance complète est dans `.memex/ledger.jsonl` et dans 
 ## Page vivante
 
 Elle dit ce qui est vrai **aujourd'hui**. On la réécrit quand la réalité change ; on n'y empile pas
-l'historique. Sections recommandées, à omettre si elles seraient vides :
+l'historique. Elle est chargée en entier au début de chaque session sur le dossier : elle reste donc
+condensée, la qualité compte plus que la quantité. Chaque point tient en une ou deux lignes ; le
+détail va dans une page complémentaire du dossier, par thème, et la page vivante n'en garde qu'une
+ligne avec le lien. Sections recommandées, à omettre si elles seraient vides :
 
 - `## En bref` — le but et l'état actuel, en trois à six lignes.
 - `## Grandes lignes` — pour un projet : architecture et choix structurants ; pour un sujet : où on en
   est. Chaque choix structurant renvoie à sa fiche de décision.
-- `## Décisions` — la liste des fiches, la plus récente en premier : lien, puis une ligne.
+- `## Décisions` — les fiches qui pèsent encore sur la suite, la plus récente en premier, une
+  douzaine au plus : lien, puis une ligne. Le dossier `Décisions/` les contient toutes.
 - `## Pistes écartées` — ce qui a été essayé ou envisagé puis abandonné, avec la raison.
-- `## Problèmes connus` — les pièges non évidents, avec leur cause et leur solution.
+- `## Problèmes connus` — les pièges non évidents : symptôme, cause et solution, en une ou deux
+  lignes chacun.
 - `## Questions ouvertes` — ce qui reste à trancher ou à faire.
 
 ## Fiche de décision
@@ -97,5 +102,5 @@ Un petit choix sans enjeu ne mérite pas de fiche : une ligne dans la page vivan
 
 - **L'archiviste** intègre ce que les sessions apportent. Il ajoute et met à jour ; il ne supprime rien.
 - **Le tisseur** relie : liens entre pages, pages de `Concepts/`. Il ne change pas le texte des autres pages.
-- **Le vérificateur** resserre : doublons, contenu périmé, pages trop longues. Ses changements ne
-  s'appliquent qu'après mon accord.
+- **Le vérificateur** resserre et contrôle : doublons, contenu périmé, pages trop longues, liens
+  faux ou manquants. Ses changements ne s'appliquent qu'après mon accord.

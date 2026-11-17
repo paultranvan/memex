@@ -467,7 +467,9 @@ class EndToEnd(Sandbox):
         review = reviews.pending()
         self.assertEqual([a["kind"] for a in review["actions"]], ["delete", "condense"])
         self.assertEqual(len(review["questions"]), 1)
-        self.assertEqual(set(review), {"id", "created", "base", "branch", "status", "actions", "questions"})
+        self.assertEqual(set(review), {"id", "created", "base", "branch", "status", "actions", "questions", "links"})
+        # the two folders the review reworks are left out of the link check
+        self.assertEqual(review["links"], [{"folder": "Projects/Solitaire", "finding": "nothing to change"}])
         self.assertEqual(set(review["actions"][0]), {
             "kind", "title", "pages", "reason", "instruction", "n", "commit", "status", "summary", "modified", "deleted"})
         self.assertEqual([a["status"] for a in review["actions"]], ["pending", "pending"])
@@ -475,12 +477,13 @@ class EndToEnd(Sandbox):
         self.assertEqual((review["actions"][0]["deleted"], review["actions"][1]["modified"]),
                          (["Topics/Duplicate/Duplicate.md"], ["Topics/Long/Long.md"]))
         self.assertEqual(review["questions"], [{"title": "Manual or scripted deployment?", "detail": "Two pages contradict each other."}])
-        self.assertEqual(set(self.state("curator.json")), {"head", "date"})
+        self.assertEqual(set(self.state("curator.json")), {"head", "date", "links_checked"})
         self.assertEqual(Server(self.config).status()["pending_review"], [review["id"]])
         shown = reviews.format(review)
         self.assertIn(f"Review {review['id']} — pending", shown)
         self.assertIn("1. [delete] Delete Duplicate.md\n   Why: Page entirely covered elsewhere.\n   Pages deleted: Topics/Duplicate/Duplicate.md", shown)
         self.assertIn("? To decide: Manual or scripted deployment?", shown)
+        self.assertIn("\nLinks checked:\n   Projects/Solitaire — nothing to change\n", shown)
         self.assertIn('Answer "ok", "ok except 2" or "no".', shown)
         # nothing has changed as long as you have not answered
         self.assertTrue((self.server_home / "wiki/Topics/Duplicate/Duplicate.md").exists())

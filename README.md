@@ -7,8 +7,8 @@ wiki. You read it in Obsidian, and the same agents read it at the start of every
   say why.
 - Each **topic** outside code (a savings plan, a machine set-up) gets the same.
 - Three agent roles maintain it: the **archivist** integrates what sessions bring, the **weaver** links
-  pages and writes cross-cutting concept pages, and the **curator** tightens the wiki. The curator's
-  changes are applied only after you approve them.
+  pages and writes cross-cutting concept pages, and the **curator** keeps pages condensed and checks
+  the links. The curator's changes are applied only after you approve them.
 
 ```
  work machines                              server
@@ -73,7 +73,7 @@ unattended requires them.
 | Where it runs | Described as one agent working alongside you | Any number of work machines feeding one server |
 | Who maintains | A single LLM agent | Three roles with separate permissions: archivist, weaver, curator |
 | What the LLM may change | Guided by the conventions file; raw sources are read-only | Enforced by code on the diff of each run: out-of-scope changes are reverted, destructive ones rejected |
-| Clean-up ("lint") | You periodically ask the LLM for a health check | Deterministic checks, then proposals you approve or reject one by one; refusals are remembered |
+| Clean-up ("lint") | You periodically ask the LLM for a health check | Deterministic checks, then weekly proposals (condense, merge, fix a link) you approve or reject one by one; refusals are remembered |
 | Bookkeeping | The LLM updates `index.md` and `log.md` | Code generates the index, log, journal and provenance; the LLM only writes pages |
 | History of choices | Not covered | Immutable, dated decision records; a changed decision gets a new record |
 | Secrets | Not covered | Known secret patterns are redacted on the work machine, before anything leaves it |
@@ -99,7 +99,8 @@ In short:
   real sessions, curator review included; the three harnesses inside the sandbox; the SSH gate
   against a real `sshd`; both installers; the test suite.
 - **Not verified:** a real server installed as root with its own account; the headless LiveSync
-  client; the Tailscale set-up; Hermes messaging; the session-start hook under Codex.
+  client; the Tailscale set-up; Hermes messaging; the session-start hook under Codex; the latest
+  curator prompts (condensing, link check) in English, which ran with a real model in French only.
 
 ## Documentation
 
