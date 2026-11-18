@@ -106,6 +106,7 @@ In short:
 
 | | |
 |---|---|
+| [docs/AGENT-ROLES.md](docs/AGENT-ROLES.md) | One page: what each agent does, with a diagram |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How it works, and every decision with its reason |
 | [docs/RUNBOOK.md](docs/RUNBOOK.md) | Install, connect, operate, rebuild, troubleshoot |
 | [config/memex.env.example](config/memex.env.example) | Every configuration variable |

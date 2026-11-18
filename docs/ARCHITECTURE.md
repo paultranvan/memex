@@ -233,6 +233,8 @@ AGENTS.md                                     the conventions (yours alone to ed
 
 ## 6. The three agents
 
+[AGENT-ROLES.md](AGENT-ROLES.md) shows the three roles on one page, with a diagram.
+
 | | Archivist | Weaver | Curator |
 |---|---|---|---|
 | Role | Integrates what the sessions bring | Links the pages, maintains `Concepts/` | Tightens (duplicates, stale content, pages over their limit) and checks the links |
@@ -259,15 +261,15 @@ and gets one more pass if a living page is still over its limit. See D43.
 it checks the links of a limited number of folders on each run (`MEMEX_CURATOR_LINK_FOLDERS`, 10),
 first the ones due for a check (never checked, or changed since the last run), then the ones
 checked longest ago, so that every folder comes round: a link that leads to the wrong page, two
-pages on the same matter that ignore each other, a broken link whose target can be identified. Each folder is a call of its own, in which the agent reads the folder's
-pages and the pages they are linked with, says what it found, and may propose one `link` action,
-in addition to the actions of the diagnosis. Only the folders it reports on count as checked, and
-a folder that the same review already reworks waits for the next run. A `link` action may change
-links and the "See also" section, and the guardrails reject it if a single other word differs.
+pages on the same matter that ignore each other, a broken link whose target can be identified.
+Each folder is a call of its own, in which the agent reads the folder's pages and the pages they
+are linked with, says what it found, and may propose one `link` action, in addition to the
+actions of the diagnosis. Only the folders it reports on count as checked, and a folder that the
+same review already reworks waits for the next run. A `link` action may change links and the
+"See also" section, and the guardrails reject it if a single other word differs. See D44.
 A folder due for a check that the limit leaves out is remembered and comes first on the next run,
 and the review carries a warning, which is notified with it: the limit may be too low. The same
 goes for a folder the agent failed on. See D45.
-See D44.
 
 It makes a read-only diagnosis, then applies each action in a separate commit, on a
 review branch. You receive the list; you answer "ok", "ok except 2" or "no". Approving carries the
