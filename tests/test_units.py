@@ -908,8 +908,9 @@ class ServerState(Sandbox):
     def test_status_reports_the_documented_keys(self):
         status = Server(self.config).status()
         self.assertEqual(list(status), [
-            "wiki", "pending", "processed", "failures", "quarantined", "pending_review", "agent", "agent_unavailable",
-            "sandbox", "vault"])
+            "wiki", "pending", "processed", "failures", "quarantined", "pending_review", "links_due", "agent",
+            "agent_unavailable", "sandbox", "vault"])
+        self.assertEqual(status["links_due"], [])
         self.assertTrue(status["wiki"].startswith("0 pages, 0 folders, 0 decisions; 0 problem(s)"))
         self.assertEqual([status[key] for key in ("pending", "processed", "failures", "quarantined", "pending_review")], [0, 0, {}, 0, []])
         self.assertEqual((status["agent"], status["agent_unavailable"]), ("hermes", "no"))
@@ -952,7 +953,7 @@ class ServerState(Sandbox):
             self.assertEqual(reviews.run(), 0)
         return [(c.kwargs["folder"], c.kwargs["neighbours"]) for c in prompt.call_args_list if c.args[0] == "curate-links"]
 
-    def test_curator_checks_the_links_of_a_few_folders_changed_first_then_checked_longest_ago(self):
+    def test_curator_checks_the_links_of_the_folders_due_first_then_of_those_checked_longest_ago(self):
         self.set(MEMEX_CURATOR_LINK_FOLDERS="2")
         server = self.linked_server()
         marker = self.server_home / "state/curator.json"
@@ -961,25 +962,68 @@ class ServerState(Sandbox):
             ("Projects/A", "- Concepts/Git.md — Version control.\n- Topics/C/C.md — Page C."), ("Projects/B", "(none)")])
         state = json.loads(marker.read_text(encoding="utf-8"))
         self.assertEqual(sorted(state["links_checked"]), ["Projects/A", "Projects/B"])
-        # a folder that changed comes first, then the one never checked or checked longest ago
+        self.assertEqual(state["links_due"], ["Topics/C"])                  # over the limit: it waits
+        # the folder that waited comes first, then the one that changed
         state["links_checked"] = {"Projects/A": "2026-11-10T08:00:00Z", "Projects/B": "2026-11-01T08:00:00Z", "Gone/Folder": "2026-01-01T00:00:00Z"}
         marker.write_text(json.dumps(state), encoding="utf-8")
         write_pages(server.repo.dir, {"Projects/A/Notes.md": "---\ntype: synthesis\ntitle: Notes\nsummary: r\n---\n\nSee [[Projects/A/A|A]].\n"})
         server.repo.commit_all(server.repo.dir, "a page in A", "human")
-        self.assertEqual([folder for folder, _ in self.curator_run(server)], ["Projects/A", "Topics/C"])
+        self.assertEqual([folder for folder, _ in self.curator_run(server)], ["Topics/C", "Projects/A"])
         state = json.loads(marker.read_text(encoding="utf-8"))
         self.assertEqual(sorted(state["links_checked"]), ["Projects/A", "Projects/B", "Topics/C"])   # the folder that no longer exists is forgotten
         self.assertEqual(state["links_checked"]["Projects/B"], "2026-11-01T08:00:00Z")
-        # nothing changed in a folder: the one checked longest ago
+        self.assertEqual(state["links_due"], [])
+        self.assertEqual(Reviews(server).all()[-1]["warnings"], [])
+        # no folder is due: the one checked longest ago
         write_pages(server.repo.dir, {"Concepts/Git.md": "---\ntype: concept\ntitle: Git\nsummary: Version control.\n---\n\nMore text.\n"})
         server.repo.commit_all(server.repo.dir, "a concept", "human")
         self.assertEqual(self.curator_run(server)[0][0], "Projects/B")
-        # and the check can be turned off
-        self.set(MEMEX_CURATOR_LINK_FOLDERS="0")
+        # a folder left waiting goes before one that has just changed, even one checked longer ago
+        self.set(MEMEX_CURATOR_LINK_FOLDERS="1")
         server = Server(self.config)
+        state = json.loads(marker.read_text(encoding="utf-8"))
+        state["links_checked"] = {"Projects/A": "2026-11-10T08:00:00Z", "Projects/B": "2026-11-01T08:00:00Z", "Topics/C": "2026-11-05T08:00:00Z"}
+        state["links_due"] = ["Projects/A"]
+        marker.write_text(json.dumps(state), encoding="utf-8")
         write_pages(server.repo.dir, {"Projects/B/B.md": "---\ntype: project\ntitle: B\nsummary: Page B.\n---\n\nNew text.\n"})
         server.repo.commit_all(server.repo.dir, "B", "human")
+        self.assertEqual([folder for folder, _ in self.curator_run(server)], ["Projects/A"])
+        self.assertEqual(json.loads(marker.read_text(encoding="utf-8"))["links_due"], ["Projects/B"])
+        # and the check can be turned off: the folders due are remembered, with no warning
+        self.set(MEMEX_CURATOR_LINK_FOLDERS="0")
+        server = Server(self.config)
+        write_pages(server.repo.dir, {"Topics/C/C.md": "---\ntype: topic\ntitle: C\nsummary: Page C.\n---\n\nNew text.\n"})
+        server.repo.commit_all(server.repo.dir, "C", "human")
         self.assertEqual(self.curator_run(server), [])
+        self.assertEqual(json.loads(marker.read_text(encoding="utf-8"))["links_due"], ["Projects/B", "Topics/C"])
+        self.assertEqual(Reviews(server).all()[-1]["warnings"], [])
+
+    def test_curator_warns_when_folders_due_for_a_link_check_are_left_out(self):
+        from memex.review import _names
+
+        self.set(MEMEX_CURATOR_LINK_FOLDERS="2")
+        server = self.linked_server()
+        self.curator_run(server)
+        reviews = Reviews(server)
+        [review] = reviews.all()
+        self.assertEqual(review["warnings"], [
+            "1 folder(s) due for a link check had to wait, over the limit of 2 per run: Topics/C. "
+            "They come first on the next run. If this keeps happening, raise MEMEX_CURATOR_LINK_FOLDERS."])
+        self.assertIn("\n\n⚠ 1 folder(s) due for a link check had to wait", reviews.format(review))
+        notices = (self.server_home / "logs/notifications.log").read_text(encoding="utf-8")
+        self.assertIn("memex: the curator proposes 0 action(s), 1 folder(s) left unchecked\n", notices)
+        self.assertEqual(Server(self.config).status()["links_due"], ["Topics/C"])
+        # the wiki has not changed, but a folder is still due: its links are checked, with no new diagnosis
+        self.assertEqual([folder for folder, _ in self.curator_run(server)], ["Topics/C"])
+        self.assertEqual([c["role"] for c in self.agent_calls()], ["diagnose", "links", "links", "links"])
+        self.assertEqual(Server(self.config).status()["links_due"], [])
+        self.assertEqual(len(reviews.all()), 1)             # nothing to propose and no warning: no review
+        self.assertEqual(notices, (self.server_home / "logs/notifications.log").read_text(encoding="utf-8"))
+        # nothing is due any more: no run on an unchanged wiki
+        self.assertEqual(self.curator_run(server), [])
+        self.assertEqual(len(self.agent_calls()), 4)
+        # a long list of folders is cut short
+        self.assertEqual(_names([f"Projects/P{n}" for n in range(10)], most=3), "Projects/P0, Projects/P1, Projects/P2 and 7 more")
 
     def test_only_the_folders_the_curator_reports_on_count_as_checked(self):
         server = self.linked_server()
@@ -987,7 +1031,15 @@ class ServerState(Sandbox):
         self.curator_run(server)
         state = json.loads((self.server_home / "state/curator.json").read_text(encoding="utf-8"))
         self.assertEqual(state["links_checked"], {})
-        self.assertEqual(Reviews(server).all()[-1]["links"], [])
+        self.assertEqual(state["links_due"], ["Projects/A", "Projects/B", "Topics/C"])
+        review = Reviews(server).all()[-1]
+        self.assertEqual(review["links"], [])
+        # and you are told, since the folders were not checked
+        self.assertEqual(review["warnings"], [
+            "3 folder(s) could not have their links checked, the agent failed or reported nothing: "
+            "Projects/A, Projects/B, Topics/C. They are tried again on the next run."])
+        notices = (self.server_home / "logs/notifications.log").read_text(encoding="utf-8")
+        self.assertIn("memex: the curator proposes 0 action(s), 3 folder(s) left unchecked\n", notices)
 
     def test_a_condensed_page_still_over_its_limit_gets_a_second_pass(self):
         self.set(MEMEX_LIVING_PAGE_CHARS="12")

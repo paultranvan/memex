@@ -256,14 +256,17 @@ condense it the same way. The curator is told the size and the limit of each pag
 and gets one more pass if a living page is still over its limit. See D43.
 
 **The curator** has two jobs. It tightens: duplicates, stale content, pages over their limit. And
-it checks the links of a few folders on each run (`MEMEX_CURATOR_LINK_FOLDERS`, 4), those that
-changed first, then the ones checked longest ago, so that every folder comes round: a link that
-leads to the wrong page, two pages on the same matter that ignore each other, a broken link whose
-target can be identified. Each folder is a call of its own, in which the agent reads the folder's
+it checks the links of a limited number of folders on each run (`MEMEX_CURATOR_LINK_FOLDERS`, 10),
+first the ones due for a check (never checked, or changed since the last run), then the ones
+checked longest ago, so that every folder comes round: a link that leads to the wrong page, two
+pages on the same matter that ignore each other, a broken link whose target can be identified. Each folder is a call of its own, in which the agent reads the folder's
 pages and the pages they are linked with, says what it found, and may propose one `link` action,
 in addition to the actions of the diagnosis. Only the folders it reports on count as checked, and
 a folder that the same review already reworks waits for the next run. A `link` action may change
 links and the "See also" section, and the guardrails reject it if a single other word differs.
+A folder due for a check that the limit leaves out is remembered and comes first on the next run,
+and the review carries a warning, which is notified with it: the limit may be too low. The same
+goes for a folder the agent failed on. See D45.
 See D44.
 
 It makes a read-only diagnosis, then applies each action in a separate commit, on a
@@ -478,6 +481,21 @@ ones checked longest ago (`state/curator.json`).
 deletes one is rejected. A folder counts as checked only if the curator's reply says what it read
 and found there.
 
+**D45 — A folder left unchecked is remembered, and you are warned.**
+The limit on the folders checked per run started at 4, chosen for the cost without a measure. A
+check takes 8 to 17 seconds, and in the one wiki measured the sessions of a week touched 1 to 3
+folders four weeks out of five, and 12 the other week: the default is now 10. A limit can still be
+too low without anyone noticing, so the code keeps the list of the folders due for a check, the
+ones never checked or changed since the last run (`links_due` in `state/curator.json`, shown by
+`memex server status`). The folders the limit leaves out come first on the next run, before the
+ones that have just changed, and the review says how many waited and which, with the name of the
+setting to raise. The warning is sent even when the curator has nothing else to propose.
+*What counts as left out:* a folder due for a check. A folder checked before and unchanged since
+is not: it comes round in rotation, when the limit leaves room.
+*Also warned about:* a folder on which the agent failed or reported nothing, which is tried again
+on the next run. That is not a matter of limit, and the message says so.
+*An unchanged wiki* gets no new diagnosis, but the folders still due get their check.
+
 **D23 — One writer at a time.**
 A single lock covers the archivist, the weaver, the curator and the approvals.
 
@@ -574,7 +592,7 @@ and a conventions file.
 
 **Verified on the author's machine (2026-11-16):**
 
-- 126 automated tests, including 29 end-to-end scenarios (nominal path, session continuations,
+- 127 automated tests, including 29 end-to-end scenarios (nominal path, session continuations,
   guardrails, quarantine, agent outage, review, restore, rebuild, forged segment), on an English wiki
   and on a French one.
 - An independent review of the code by a second agent, which reproduced five defects (including a
@@ -598,7 +616,8 @@ and a conventions file.
   one `condense` action each (the longest from 30,000 characters to 2,800); the total text of the
   pages concerned grew by 0 to 23 %, which suggests detail was moved rather than dropped, but this
   was not checked fact by fact. The links of six folders were checked, one call each: two `link`
-  actions proposed, both accepted by the guardrails.
+  actions proposed, both accepted by the guardrails. The warning about folders left unchecked
+  (D45) came later the same day and is covered by the automated tests only.
 - The three harnesses (Hermes, Claude Code, Codex), at the three permission levels, in the sandbox.
 - The exclusion of the pipeline's own sessions, on Hermes's real database.
 - The SSH gate against a real `sshd`: shell, arbitrary command, other repository and writing all

@@ -1,10 +1,12 @@
 """The curator: it proposes, you approve, and only then does the wiki change.
 
 It tightens the pages (duplicates, stale content, pages over their limit) and
-checks the links: a few folders on each run, those that changed first, then the
-ones checked longest ago, so that every folder comes round. Each folder is a
-call of its own: asked along with the rest, the model judged the links from the
-summaries without opening the pages.
+checks the links: a limited number of folders on each run, the ones due for a
+check first (never checked, or changed since), then the ones checked longest
+ago, so that every folder comes round. A due folder that the limit leaves out
+is remembered, comes first on the next run, and you are warned. Each folder is
+a call of its own: asked along with the rest, the model judged the links from
+the summaries without opening the pages.
 
 Each action is a commit on a review branch. Approving an action means carrying
 its commit over to `main`; rejecting it records it in the list of refusals, so
@@ -31,6 +33,11 @@ ACTION_KINDS = {"merge", "condense", "fix", "delete", "move", "link"}
 DIAGNOSIS_KINDS = ACTION_KINDS - {"link"}  # a `link` action only comes out of the link check
 LINK_NEIGHBOURS = 12  # pages listed for each folder whose links are checked
 PENDING, DONE, REJECTED, EXPIRED = "pending", "applied", "rejected", "expired"
+
+
+def _names(folders: list[str], most: int = 8) -> str:
+    extra = len(folders) - most
+    return ", ".join(folders[:most]) + (f" and {extra} more" if extra > 0 else "")
 
 
 class Reviews:
@@ -86,16 +93,31 @@ class Reviews:
             "reason": str(raw.get("reason", ""))[:600], "instruction": str(raw.get("instruction", ""))[:1500],
         }
 
-    def link_folders(self, pages: dict, changed: list[str], checked: dict, skip: frozenset = frozenset()) -> list[str]:
-        """The folders whose links are checked on this run: those that changed, then the ones checked longest ago.
+    @staticmethod
+    def folders(pages: dict) -> list[str]:
+        """The project and topic folders: the units of the link check."""
+        loc = i18n.current()
+        return index.folders(pages, loc.projects) + index.folders(pages, loc.topics)
 
+    def links_due(self, pages: dict, changed: list[str], checked: dict, waiting: list[str]) -> set[str]:
+        """The folders due for a link check: never checked, changed since the last run, or left waiting by it."""
+        touched = {folder_of(path) for path in changed} | set(waiting)
+        return {folder for folder in self.folders(pages) if folder in touched or folder not in checked}
+
+    def link_folders(
+        self, pages: dict, due: set[str], checked: dict, waiting: list[str], skip: frozenset = frozenset(),
+    ) -> tuple[list[str], list[str]]:
+        """The folders whose links are checked on this run, and the due ones that the limit leaves out.
+
+        First the folders a previous run left waiting, then the other due ones, then the ones checked longest ago.
         `skip`: the folders this review already reworks. Their links are checked once the pages have settled.
         """
-        loc = i18n.current()
-        known = [f for f in index.folders(pages, loc.projects) + index.folders(pages, loc.topics) if f not in skip]
-        touched = {folder_of(path) for path in changed}
-        ranked = sorted(known, key=lambda folder: (folder not in touched, str(checked.get(folder, "")), folder.lower()))
-        return ranked[:max(self.config.int("MEMEX_CURATOR_LINK_FOLDERS"), 0)]
+        ranked = sorted(
+            (folder for folder in self.folders(pages) if folder not in skip),
+            key=lambda folder: (folder not in due, folder not in waiting, str(checked.get(folder, "")), folder.lower()),
+        )
+        limit = max(self.config.int("MEMEX_CURATOR_LINK_FOLDERS"), 0)
+        return ranked[:limit], [folder for folder in ranked[limit:] if folder in due] if limit else []
 
     def sizes(self, root: Path, paths: list[str], only_over: bool = False) -> str:
         """One line per page: its size and its limit. `only_over`: the living pages still over theirs."""
@@ -133,9 +155,7 @@ class Reviews:
         state = read_json(marker, {}) or {}
         last = state.get("head", "")
         checked = state.get("links_checked") if isinstance(state.get("links_checked"), dict) else {}
-        if last == head and not force:
-            eprint("memex: the wiki has not changed since the curator's last run.")
-            return 0
+        waiting = [str(f) for f in state.get("links_due")] if isinstance(state.get("links_due"), list) else []
         loc = i18n.current()
         report = lint_wiki(config, repo.dir)
         changed = ""
@@ -145,6 +165,13 @@ class Reviews:
             except CommandError:
                 changed = ""
         changed_paths = changed.splitlines()
+        due = self.links_due(load_wiki(repo.dir), changed_paths, checked, waiting)
+        # An unchanged wiki gets no new diagnosis, but the folders still due for a link check get theirs.
+        diagnose = force or last != head
+        limit = max(config.int("MEMEX_CURATOR_LINK_FOLDERS"), 0)
+        if not diagnose and not (due and limit):
+            eprint("memex: the wiki has not changed since the curator's last run.")
+            return 0
         changed = "\n".join(f"- {line}" for line in changed_paths[:80]) or loc.t("glue.first_pass")
         def listed(refusals: list[dict]) -> str:
             return "\n".join(
@@ -159,27 +186,29 @@ class Reviews:
         path = repo.new_worktree(name)
         max_actions = config.int("MEMEX_CURATOR_MAX_ACTIONS")
         wiki = load_wiki(path)
-        prompt = server.prompt(
-            "curate-diagnose", conventions=server.conventions(path),
-            report=json.dumps(
-                {"problems": report.problems[:40], "orphans": report.orphans[:30], "stats": report.stats},
-                ensure_ascii=False, indent=2,
-            ),
-            changed=changed, index=index.compact(wiki), refused=refused, max_actions=str(max_actions),
-        )
 
         def clean() -> None:      # a read-only agent may still have left files behind
             repo.git("reset", "--quiet", "--hard", "HEAD", cwd=path)
             repo.git("clean", "-fdq", cwd=path)
 
-        try:
-            reply = server.agent.run("read", prompt, path, f"curate-diag-{review_id}", role="diagnose")
-            plan = parse_json_reply(reply.text)
-        except AgentError as exc:
-            repo.drop_worktree(name)
-            eprint(f"memex: the curator's diagnosis failed ({exc})")
-            return 1
-        clean()
+        plan = {}
+        if diagnose:
+            prompt = server.prompt(
+                "curate-diagnose", conventions=server.conventions(path),
+                report=json.dumps(
+                    {"problems": report.problems[:40], "orphans": report.orphans[:30], "stats": report.stats},
+                    ensure_ascii=False, indent=2,
+                ),
+                changed=changed, index=index.compact(wiki), refused=refused, max_actions=str(max_actions),
+            )
+            try:
+                reply = server.agent.run("read", prompt, path, f"curate-diag-{review_id}", role="diagnose")
+                plan = parse_json_reply(reply.text)
+            except AgentError as exc:
+                repo.drop_worktree(name)
+                eprint(f"memex: the curator's diagnosis failed ({exc})")
+                return 1
+            clean()
         actions = []
         for raw in plan.get("actions") if isinstance(plan.get("actions"), list) else []:
             kind = str(raw.get("kind")) if isinstance(raw, dict) else ""
@@ -194,8 +223,11 @@ class Reviews:
         ][:5]
         # ── the link check: one folder per call, so that its pages get read ──
         busy = frozenset(folder_of(p) for action in actions for p in action["pages"])
+        selected, left_out = self.link_folders(wiki, due, checked, waiting, busy)
+        if not diagnose:          # an unchanged wiki: a folder already checked has nothing new to show
+            selected = [folder for folder in selected if folder in due]
         findings = []
-        for number, folder in enumerate(self.link_folders(wiki, changed_paths, checked, busy), start=1):
+        for number, folder in enumerate(selected, start=1):
             neighbours = index.related(wiki, folder)[:LINK_NEIGHBOURS]
             broken = [b for b in report.broken if folder_of(b["page"]) == folder][:10]
             prompt = server.prompt(
@@ -221,6 +253,20 @@ class Reviews:
             action = self._action(found.get("action"), "link")
             if action:
                 actions.append(action)
+        reported = {item["folder"] for item in findings}
+        failed = [folder for folder in selected if folder not in reported]
+        warnings = []
+        if left_out:
+            warnings.append(
+                f"{len(left_out)} folder(s) due for a link check had to wait, over the limit of {limit} per run: "
+                f"{_names(left_out)}. They come first on the next run. If this keeps happening, raise "
+                "MEMEX_CURATOR_LINK_FOLDERS."
+            )
+        if failed:
+            warnings.append(
+                f"{len(failed)} folder(s) could not have their links checked, the agent failed or reported nothing: "
+                f"{_names(failed)}. They are tried again on the next run."
+            )
         today = now().astimezone(server.tz).strftime("%Y-%m-%d")
         applied = []
         for number, action in enumerate(actions, start=1):
@@ -268,22 +314,29 @@ class Reviews:
             applied.append(entry)
         repo.drop_worktree(name, keep_branch=True)
         stamp = iso()
-        known = set(index.folders(wiki, loc.projects) + index.folders(wiki, loc.topics))
+        known = set(self.folders(wiki))
         checked = {folder: date for folder, date in checked.items() if folder in known}
         checked.update({item["folder"]: stamp for item in findings})
-        write_json(marker, {"head": head, "date": stamp, "links_checked": checked})
+        write_json(marker, {
+            "head": head, "date": stamp, "links_checked": checked, "links_due": sorted(due - reported, key=str.lower),
+        })
         proposals = [a for a in applied if a["status"] == PENDING]
-        if not proposals and not questions:
+        if not proposals:
             repo.git("branch", "-D", f"memex/{name}", check=False)
+        if not proposals and not questions and not warnings:
             eprint("memex: the curator has nothing to propose.")
             return 0
         review = {
             "id": review_id, "created": iso(), "base": head, "branch": f"memex/{name}",
             "status": PENDING if proposals else DONE, "actions": applied, "questions": questions, "links": findings,
+            "warnings": warnings,
         }
         self.dir.mkdir(parents=True, exist_ok=True)
         write_json(self._path(review_id), review)
-        notify(config, f"memex: the curator proposes {len(proposals)} action(s)", self.format(review))
+        subject = f"memex: the curator proposes {len(proposals)} action(s)"
+        if warnings:
+            subject += f", {len(left_out) + len(failed)} folder(s) left unchecked"
+        notify(config, subject, self.format(review))
         print(self.format(review))
         return 0
 
@@ -303,6 +356,7 @@ class Reviews:
         if review.get("links"):
             lines.append("\nLinks checked:")
             lines.extend(f"   {item['folder']} — {item['finding']}" for item in review["links"])
+        lines.extend(f"\n⚠ {warning}" for warning in review.get("warnings", []))
         if review.get("status") == PENDING:
             lines.append('\nAnswer "ok", "ok except 2" or "no".')
         return "\n".join(lines)

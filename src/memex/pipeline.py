@@ -653,6 +653,7 @@ class Server:
             "failures": failures,
             "quarantined": len(list(self.config.quarantine.glob("*/*.md"))) if self.config.quarantine.is_dir() else 0,
             "pending_review": [r.get("id") for r in reviews],
+            "links_due": (read_json(self.config.state_dir / "curator.json", {}) or {}).get("links_due", []),
             "agent": self.agent.name,
             "agent_unavailable": read_json(self.down_path, None) or "no",
             "sandbox": self.agent.sandbox_state(),

@@ -191,6 +191,20 @@ memex server review reject
 Nothing changes before you answer. A rejected action is not proposed again. Without an answer, the
 review expires after ten days and the curator starts again from scratch.
 
+The review may end with a warning:
+
+```
+⚠ 3 folder(s) due for a link check had to wait, over the limit of 10 per run: Projects/Atlas,
+Projects/Solitaire, Topics/Hosting. They come first on the next run. If this keeps happening,
+raise MEMEX_CURATOR_LINK_FOLDERS.
+```
+
+A folder is due for a check when its links were never checked or when it changed since the last
+run. One warning after a busy week is harmless, since the folders come first the week after; if
+it comes back, raise `MEMEX_CURATOR_LINK_FOLDERS` in `memex.env`. `memex server status` lists the
+folders still waiting (`links_due`). Another warning names the folders on which the agent failed:
+they are tried again on the next run, and the limit has nothing to do with it.
+
 ## Tuning the behaviour
 
 | What you want to change | Where |
@@ -202,7 +216,7 @@ review expires after ten days and the curator starts again from scratch.
 | How long a page may get | `MEMEX_LIVING_PAGE_CHARS` (the main page of a folder), `MEMEX_MAX_PAGE_CHARS` (the others) |
 | What a session receives when it starts | `MEMEX_HOOK_MAX_CHARS`, `MEMEX_HOOK_RELATED` |
 | The number of actions per review | `MEMEX_CURATOR_MAX_ACTIONS` |
-| How many folders have their links checked per review | `MEMEX_CURATOR_LINK_FOLDERS` |
+| How many folders have their links checked per review | `MEMEX_CURATOR_LINK_FOLDERS` (a warning in the review tells you when it is too low) |
 | The curator's day | `server/install.sh --curate "Sun *-*-* 05:00:00"` |
 | The model | `MEMEX_AGENT_MODEL` |
 | The harness | `MEMEX_AGENT`, or `MEMEX_AGENT_EXTRACT_CMD` / `_READ_CMD` / `_EDIT_CMD` |

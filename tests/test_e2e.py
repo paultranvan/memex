@@ -467,9 +467,10 @@ class EndToEnd(Sandbox):
         review = reviews.pending()
         self.assertEqual([a["kind"] for a in review["actions"]], ["delete", "condense"])
         self.assertEqual(len(review["questions"]), 1)
-        self.assertEqual(set(review), {"id", "created", "base", "branch", "status", "actions", "questions", "links"})
-        # the two folders the review reworks are left out of the link check
+        self.assertEqual(set(review), {"id", "created", "base", "branch", "status", "actions", "questions", "links", "warnings"})
+        # the two folders the review reworks are left out of the link check: they stay due, and that is no warning
         self.assertEqual(review["links"], [{"folder": "Projects/Solitaire", "finding": "nothing to change"}])
+        self.assertEqual(review["warnings"], [])
         self.assertEqual(set(review["actions"][0]), {
             "kind", "title", "pages", "reason", "instruction", "n", "commit", "status", "summary", "modified", "deleted"})
         self.assertEqual([a["status"] for a in review["actions"]], ["pending", "pending"])
@@ -477,7 +478,8 @@ class EndToEnd(Sandbox):
         self.assertEqual((review["actions"][0]["deleted"], review["actions"][1]["modified"]),
                          (["Topics/Duplicate/Duplicate.md"], ["Topics/Long/Long.md"]))
         self.assertEqual(review["questions"], [{"title": "Manual or scripted deployment?", "detail": "Two pages contradict each other."}])
-        self.assertEqual(set(self.state("curator.json")), {"head", "date", "links_checked"})
+        self.assertEqual(set(self.state("curator.json")), {"head", "date", "links_checked", "links_due"})
+        self.assertEqual(self.state("curator.json")["links_due"], ["Topics/Duplicate", "Topics/Long"])
         self.assertEqual(Server(self.config).status()["pending_review"], [review["id"]])
         shown = reviews.format(review)
         self.assertIn(f"Review {review['id']} — pending", shown)
