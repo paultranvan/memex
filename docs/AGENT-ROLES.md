@@ -5,29 +5,29 @@ page shows who does what. The reasons behind each choice are in
 [ARCHITECTURE.md](ARCHITECTURE.md#6-the-three-agents).
 
 ```mermaid
-flowchart LR
+flowchart TB
     S["Your sessions<br/>Claude Code, Codex, Hermes"]
     SW["Sweeper<br/>no model"]
-    H["Session-start hook<br/>no model"]
 
     subgraph server["Server"]
         A["Archivist<br/>integrates each session"]
-        WV["Weaver<br/>links the pages"]
-        C["Curator<br/>tightens, checks the links"]
+        WV["Weaver<br/>links the pages<br/>after each run"]
+        C["Curator<br/>tightens, checks the links<br/>every week"]
         Y{"You approve<br/>or reject"}
         W[("Wiki<br/>git repository")]
     end
 
+    H["Session-start hook<br/>no model"]
+    N["Your next session<br/>starts with the project page"]
+
     S --> SW
     SW -- "segments" --> A
     A -- "one commit per session" --> W
-    W -. "after each run" .-> WV
     WV -- "links, concept pages" --> W
-    W -. "every week" .-> C
     C -- "review" --> Y
     Y -- "approved actions" --> W
     W -- "project page" --> H
-    H --> S
+    H --> N
 ```
 
 ## The three roles
